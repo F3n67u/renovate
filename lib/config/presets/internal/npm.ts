@@ -1,11 +1,13 @@
 import type { Preset } from '../types';
 
+/* eslint sort-keys: ["error", "asc", {caseSensitive: false, natural: true}] */
+
 export const presets: Record<string, Preset> = {
   unpublishSafe: {
     description:
-      'Set a status check pending for 3 days from release timestamp to guard against npm unpublishing',
+      'Wait until the npm package is three days old before raising the update, this prevents npm unpublishing a package you already upgraded to.',
     npm: {
-      stabilityDays: 3,
+      minimumReleaseAge: '3 days',
     },
   },
 };

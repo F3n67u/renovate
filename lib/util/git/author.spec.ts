@@ -3,7 +3,7 @@ import { parseGitAuthor } from './author';
 describe('util/git/author', () => {
   describe('parseGitAuthor', () => {
     it('returns null if empty email given', () => {
-      expect(parseGitAuthor(undefined)).toBeNull();
+      expect(parseGitAuthor(undefined as never)).toBeNull();
     });
 
     it('handles a normal address', () => {
@@ -19,7 +19,9 @@ describe('util/git/author', () => {
 
     it('parses bot name and email', () => {
       expect(
-        parseGitAuthor('renovate[bot] <renovate[bot]@users.noreply.github.com>')
+        parseGitAuthor(
+          'renovate[bot] <renovate[bot]@users.noreply.github.com>',
+        ),
       ).toEqual({
         address: 'renovate[bot]@users.noreply.github.com',
         name: 'renovate[bot]',
@@ -27,8 +29,8 @@ describe('util/git/author', () => {
     });
 
     it('escapes names', () => {
-      expect(parseGitAuthor('name [what] <name@what.com>').name).toBe(
-        `name [what]`
+      expect(parseGitAuthor('name [what] <name@what.com>')?.name).toBe(
+        `name [what]`,
       );
     });
 

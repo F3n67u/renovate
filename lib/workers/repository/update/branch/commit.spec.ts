@@ -1,22 +1,17 @@
-import {
-  defaultConfig,
-  git,
-  partial,
-  platform,
-} from '../../../../../test/util';
+import { scm } from '../../../../../test/util';
 import { GlobalConfig } from '../../../../config/global';
+import type { LongCommitSha } from '../../../../util/git/types';
 import type { BranchConfig } from '../../../types';
 import { commitFilesToBranch } from './commit';
-
-jest.mock('../../../../util/git');
 
 describe('workers/repository/update/branch/commit', () => {
   describe('commitFilesToBranch', () => {
     let config: BranchConfig;
 
     beforeEach(() => {
-      config = partial<BranchConfig>({
-        ...defaultConfig,
+      config = {
+        baseBranch: 'base-branch',
+        manager: 'some-manager',
         branchName: 'renovate/some-branch',
         commitMessage: 'some commit message',
         semanticCommits: 'disabled',
@@ -24,50 +19,55 @@ describe('workers/repository/update/branch/commit', () => {
         semanticCommitScope: 'b',
         updatedPackageFiles: [],
         updatedArtifacts: [],
-      });
-      jest.resetAllMocks();
-      git.commitFiles.mockResolvedValueOnce('123test');
-      platform.commitFiles = jest.fn();
+        upgrades: [],
+        platformCommit: 'auto',
+      } satisfies BranchConfig;
+      scm.commitAndPush.mockResolvedValueOnce('123test' as LongCommitSha);
       GlobalConfig.reset();
     });
 
     it('handles empty files', async () => {
       await commitFilesToBranch(config);
-      expect(git.commitFiles).toHaveBeenCalledTimes(0);
+      expect(scm.commitAndPush).toHaveBeenCalledTimes(0);
     });
 
     it('commits files', async () => {
-      config.updatedPackageFiles.push({
+      config.updatedPackageFiles?.push({
         type: 'addition',
         path: 'package.json',
         contents: 'some contents',
       });
       await commitFilesToBranch(config);
-      expect(git.commitFiles).toHaveBeenCalledTimes(1);
-      expect(git.commitFiles.mock.calls).toMatchSnapshot();
-    });
-
-    it('commits via platform', async () => {
-      config.updatedPackageFiles.push({
-        type: 'addition',
-        path: 'package.json',
-        contents: 'some contents',
-      });
-      config.platformCommit = true;
-      await commitFilesToBranch(config);
-      expect(platform.commitFiles).toHaveBeenCalledTimes(1);
-      expect(platform.commitFiles.mock.calls).toMatchSnapshot();
+      expect(scm.commitAndPush).toHaveBeenCalledTimes(1);
+      expect(scm.commitAndPush.mock.calls).toEqual([
+        [
+          {
+            baseBranch: 'base-branch',
+            branchName: 'renovate/some-branch',
+            files: [
+              {
+                contents: 'some contents',
+                path: 'package.json',
+                type: 'addition',
+              },
+            ],
+            force: false,
+            message: 'some commit message',
+            platformCommit: 'auto',
+          },
+        ],
+      ]);
     });
 
     it('dry runs', async () => {
       GlobalConfig.set({ dryRun: 'full' });
-      config.updatedPackageFiles.push({
+      config.updatedPackageFiles?.push({
         type: 'addition',
         path: 'package.json',
         contents: 'some contents',
       });
       await commitFilesToBranch(config);
-      expect(git.commitFiles).toHaveBeenCalledTimes(0);
+      expect(scm.commitAndPush).toHaveBeenCalledTimes(0);
     });
   });
 });

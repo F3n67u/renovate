@@ -1,33 +1,17 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`modules/datasource/go/releases-direct getReleases processes real data 1`] = `
-Object {
-  "releases": Array [
-    Object {
-      "gitRef": "v1.0.0",
-      "version": "v1.0.0",
-    },
-    Object {
-      "gitRef": "v2.0.0",
-      "version": "v2.0.0",
-    },
-  ],
-  "sourceUrl": "https://github.com/golang/text",
-}
-`;
-
 exports[`modules/datasource/go/releases-direct getReleases support bitbucket tags 1`] = `
-Object {
+{
   "registryUrl": "https://bitbucket.org",
-  "releases": Array [
-    Object {
+  "releases": [
+    {
       "gitRef": "v1.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v1.0.0",
     },
-    Object {
+    {
       "gitRef": "v2.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v2.0.0",
     },
   ],
@@ -35,33 +19,33 @@ Object {
 }
 `;
 
-exports[`modules/datasource/go/releases-direct getReleases support ghe 1`] = `
-Object {
-  "releases": Array [
-    Object {
+exports[`modules/datasource/go/releases-direct getReleases support git 1`] = `
+{
+  "releases": [
+    {
       "gitRef": "v1.0.0",
       "version": "v1.0.0",
     },
-    Object {
+    {
       "gitRef": "v2.0.0",
       "version": "v2.0.0",
     },
   ],
-  "sourceUrl": "https://git.enterprise.com/example/module",
+  "sourceUrl": null,
 }
 `;
 
 exports[`modules/datasource/go/releases-direct getReleases support gitlab 1`] = `
-Object {
-  "releases": Array [
-    Object {
+{
+  "releases": [
+    {
       "gitRef": "v1.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v1.0.0",
     },
-    Object {
+    {
       "gitRef": "v2.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v2.0.0",
     },
   ],
@@ -70,16 +54,16 @@ Object {
 `;
 
 exports[`modules/datasource/go/releases-direct getReleases support gitlab subgroups 1`] = `
-Object {
-  "releases": Array [
-    Object {
+{
+  "releases": [
+    {
       "gitRef": "v1.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v1.0.0",
     },
-    Object {
+    {
       "gitRef": "v2.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v2.0.0",
     },
   ],
@@ -88,16 +72,16 @@ Object {
 `;
 
 exports[`modules/datasource/go/releases-direct getReleases support self hosted gitlab private repositories 1`] = `
-Object {
-  "releases": Array [
-    Object {
+{
+  "releases": [
+    {
       "gitRef": "v1.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v1.0.0",
     },
-    Object {
+    {
       "gitRef": "v2.0.0",
-      "releaseTimestamp": undefined,
+      "releaseTimestamp": null,
       "version": "v2.0.0",
     },
   ],

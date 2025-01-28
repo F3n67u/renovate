@@ -1,42 +1,51 @@
 import type { Preset } from '../types';
 
+/* eslint sort-keys: ["error", "asc", {caseSensitive: false, natural: true}] */
+
 export const presets: Record<string, Preset> = {
   disable: {
-    description: 'Disable Docker updates',
-    docker: {
-      enabled: false,
-    },
-    'docker-compose': {
-      enabled: false,
-    },
     circleci: {
       enabled: false,
     },
+    description: 'Disable Docker updates.',
+    'docker-compose': {
+      enabled: false,
+    },
+    dockerfile: {
+      enabled: false,
+    },
   },
-  enableMajor: {
-    description: 'Enable Docker major updates',
+  disableMajor: {
+    description: 'Disable Docker `major` updates.',
     packageRules: [
       {
+        enabled: false,
         matchDatasources: ['docker'],
         matchUpdateTypes: ['major'],
-        enabled: true,
       },
     ],
   },
-  disableMajor: {
-    description: 'Disable Docker major updates',
+  enableMajor: {
+    description: 'Enable Docker `major` updates.',
     packageRules: [
       {
+        enabled: true,
         matchDatasources: ['docker'],
         matchUpdateTypes: ['major'],
-        enabled: false,
       },
     ],
   },
   pinDigests: {
-    description: 'Pin Docker digests',
-    docker: {
-      pinDigests: true,
-    },
+    description: 'Pin Docker digests.',
+    packageRules: [
+      {
+        matchDatasources: ['docker'],
+        pinDigests: true,
+      },
+      {
+        matchManagers: ['argocd', 'devcontainer', 'helmv3', 'pyenv'],
+        pinDigests: false,
+      },
+    ],
   },
 };

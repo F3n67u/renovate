@@ -1,6 +1,8 @@
-const re = new RegExp(
+import { regEx } from '../../../util/regex';
+
+const re = regEx(
   `(?<preNotes>.*### Release Notes)(?<releaseNotes>.*)### Configuration(?<postNotes>.*)`,
-  's'
+  's',
 );
 
 export function smartTruncate(input: string, len: number): string {
@@ -9,14 +11,14 @@ export function smartTruncate(input: string, len: number): string {
   }
 
   const reMatch = re.exec(input);
-  if (!reMatch) {
+  if (!reMatch?.groups) {
     return input.substring(0, len);
   }
 
   const divider = `\n\n</details>\n\n---\n\n### Configuration`;
-  const preNotes = reMatch.groups?.preNotes ?? '';
-  const releaseNotes = reMatch.groups?.releaseNotes ?? '';
-  const postNotes = reMatch.groups?.postNotes ?? '';
+  const preNotes = reMatch.groups.preNotes;
+  const releaseNotes = reMatch.groups.releaseNotes;
+  const postNotes = reMatch.groups.postNotes;
 
   const availableLength =
     len - (preNotes.length + postNotes.length + divider.length);

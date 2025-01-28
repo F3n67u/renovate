@@ -1,17 +1,17 @@
-import { loadFixture } from '../../../../test/util';
+import { Fixtures } from '../../../../test/fixtures';
 import { GlobalConfig } from '../../../config/global';
-import { extractPackageFile } from './extract';
+import { extractPackageFile } from '.';
 
-const requirements1 = loadFixture('requirements1.txt');
-const requirements2 = loadFixture('requirements2.txt');
-const requirements3 = loadFixture('requirements3.txt');
-const requirements4 = loadFixture('requirements4.txt');
-const requirements5 = loadFixture('requirements5.txt');
-const requirements6 = loadFixture('requirements6.txt');
-const requirements7 = loadFixture('requirements7.txt');
-const requirements8 = loadFixture('requirements8.txt');
-const requirementsWithEnvMarkers = loadFixture('requirements-env-markers.txt');
-const requirementsGitPackages = loadFixture('requirements-git-packages.txt');
+const requirements1 = Fixtures.get('requirements1.txt');
+const requirements2 = Fixtures.get('requirements2.txt');
+const requirements3 = Fixtures.get('requirements3.txt');
+const requirements4 = Fixtures.get('requirements4.txt');
+const requirements5 = Fixtures.get('requirements5.txt');
+const requirements6 = Fixtures.get('requirements6.txt');
+const requirements7 = Fixtures.get('requirements7.txt');
+const requirements8 = Fixtures.get('requirements8.txt');
+const requirementsWithEnvMarkers = Fixtures.get('requirements-env-markers.txt');
+const requirementsGitPackages = Fixtures.get('requirements-git-packages.txt');
 
 describe('modules/manager/pip_requirements/extract', () => {
   beforeEach(() => {
@@ -25,11 +25,9 @@ describe('modules/manager/pip_requirements/extract', () => {
   });
 
   describe('extractPackageFile()', () => {
-    let config;
     const OLD_ENV = process.env;
 
     beforeEach(() => {
-      config = { registryUrls: ['AnExistingDefaultUrl'] };
       process.env = { ...OLD_ENV };
       delete process.env.PIP_INDEX_URL;
     });
@@ -39,130 +37,152 @@ describe('modules/manager/pip_requirements/extract', () => {
     });
 
     it('returns null for empty', () => {
-      expect(
-        extractPackageFile('nothing here', 'requirements.txt', config)
-      ).toBeNull();
+      expect(extractPackageFile('nothing here')).toBeNull();
     });
 
     it('extracts dependencies', () => {
-      const res = extractPackageFile(requirements1, 'unused_file_name', config);
+      const res = extractPackageFile(requirements1);
       expect(res).toMatchSnapshot();
-      expect(res.registryUrls).toEqual(['http://example.com/private-pypi/']);
-      expect(res.deps).toHaveLength(4);
+      expect(res?.registryUrls).toEqual(['http://example.com/private-pypi/']);
+      expect(res?.deps).toHaveLength(4);
+    });
+
+    it('extracts dependencies with --index-url short code', () => {
+      const requirements = `-i http://example.com/private-pypi/
+some-package==0.3.1`;
+
+      const res = extractPackageFile(requirements);
+
+      expect(res).toMatchObject({
+        deps: [
+          {
+            currentValue: '==0.3.1',
+            currentVersion: '0.3.1',
+            datasource: 'pypi',
+            depName: 'some-package',
+          },
+        ],
+      });
+    });
+
+    it('extracts --requirement short code option', () => {
+      const requirements = `-r base.txt
+some-package==0.3.1`;
+
+      const res = extractPackageFile(requirements);
+
+      expect(res).toHaveProperty('managerData', {
+        requirementsFiles: ['base.txt'],
+      });
+    });
+
+    it('extracts --constraints short code option', () => {
+      const requirements = `-c constrain.txt
+some-package==0.3.1`;
+
+      const res = extractPackageFile(requirements);
+
+      expect(res).toHaveProperty('managerData', {
+        constraintsFiles: ['constrain.txt'],
+      });
     });
 
     it('extracts multiple dependencies', () => {
-      const res = extractPackageFile(
-        requirements2,
-        'unused_file_name',
-        config
-      ).deps;
+      const res = extractPackageFile(requirements2)?.deps;
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(5);
     });
 
     it('handles comments and commands', () => {
-      const res = extractPackageFile(
-        requirements3,
-        'unused_file_name',
-        config
-      ).deps;
+      const res = extractPackageFile(requirements3)?.deps;
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(5);
     });
 
     it('handles extras and complex index url', () => {
-      const res = extractPackageFile(requirements4, 'unused_file_name', config);
+      const res = extractPackageFile(requirements4);
       expect(res).toMatchSnapshot();
-      expect(res.registryUrls).toEqual([
+      expect(res?.registryUrls).toEqual([
         'https://artifactory.company.com/artifactory/api/pypi/python/simple',
       ]);
-      expect(res.deps).toHaveLength(3);
+      expect(res?.deps).toHaveLength(3);
     });
 
     it('handles extra index url', () => {
-      const res = extractPackageFile(requirements5, 'unused_file_name', config);
+      const res = extractPackageFile(requirements5);
       expect(res).toMatchSnapshot();
-      expect(res.registryUrls).toEqual([
+      expect(res?.registryUrls).toEqual([
         'https://artifactory.company.com/artifactory/api/pypi/python/simple',
+      ]);
+      expect(res?.additionalRegistryUrls).toEqual([
         'http://example.com/private-pypi/',
       ]);
-      expect(res.deps).toHaveLength(6);
+      expect(res?.deps).toHaveLength(6);
     });
 
     it('handles extra index url and defaults without index to config', () => {
-      const res = extractPackageFile(requirements6, 'unused_file_name', config);
+      const res = extractPackageFile(requirements6);
       expect(res).toMatchSnapshot();
-      expect(res.registryUrls).toEqual([
-        'AnExistingDefaultUrl',
+      expect(res?.additionalRegistryUrls).toEqual([
         'http://example.com/private-pypi/',
       ]);
-      expect(res.deps).toHaveLength(6);
+      expect(res?.deps).toHaveLength(6);
     });
 
     it('handles extra index url and defaults without index to pypi', () => {
-      const res = extractPackageFile(requirements6, 'unused_file_name', {});
+      const res = extractPackageFile(requirements6);
       expect(res).toMatchSnapshot();
-      expect(res.registryUrls).toEqual([
-        'https://pypi.org/pypi/',
+      expect(res?.additionalRegistryUrls).toEqual([
         'http://example.com/private-pypi/',
       ]);
-      expect(res.deps).toHaveLength(6);
+      expect(res?.deps).toHaveLength(6);
     });
 
     it('handles extra spaces around pinned dependency equal signs', () => {
-      const res = extractPackageFile(requirements4, 'unused_file_name', {});
+      const res = extractPackageFile(requirements4);
       expect(res).toMatchSnapshot();
 
-      expect(res.deps[0].currentValue).toStartWith('==');
-      expect(res.deps[0].currentVersion).toStartWith('2.0.12');
-      expect(res.deps[1].currentValue).toStartWith('==');
-      expect(res.deps[1].currentVersion).toStartWith('4.1.1');
-      expect(res.deps[2].currentValue).toStartWith('==');
-      expect(res.deps[2].currentVersion).toStartWith('3.2.1');
+      expect(res?.deps[0].currentValue).toStartWith('==');
+      expect(res?.deps[0].currentVersion).toStartWith('2.0.12');
+      expect(res?.deps[1].currentValue).toStartWith('==');
+      expect(res?.deps[1].currentVersion).toStartWith('4.1.1');
+      expect(res?.deps[2].currentValue).toStartWith('==');
+      expect(res?.deps[2].currentVersion).toStartWith('3.2.1');
 
-      expect(res.deps).toHaveLength(3);
+      expect(res?.deps).toHaveLength(3);
     });
 
     it('should not replace env vars in low trust mode', () => {
       process.env.PIP_TEST_TOKEN = 'its-a-secret';
-      const res = extractPackageFile(requirements7, 'unused_file_name', {});
-      expect(res.registryUrls).toEqual([
-        'https://pypi.org/pypi/',
+      const res = extractPackageFile(requirements7);
+      expect(res?.additionalRegistryUrls).toEqual([
         'http://$PIP_TEST_TOKEN:example.com/private-pypi/',
-
         'http://${PIP_TEST_TOKEN}:example.com/private-pypi/',
         'http://$PIP_TEST_TOKEN:example.com/private-pypi/',
-
-        'http://${PIP_TEST_TOKEN}:example.com/private-pypi/',
+        'http://${PIP_TEST_TOKEN1}:example.com/private-pypi/',
       ]);
     });
 
     it('should replace env vars in high trust mode', () => {
       process.env.PIP_TEST_TOKEN = 'its-a-secret';
       GlobalConfig.set({ exposeAllEnv: true });
-      const res = extractPackageFile(requirements7, 'unused_file_name', {});
-      expect(res.registryUrls).toEqual([
-        'https://pypi.org/pypi/',
+      const res = extractPackageFile(requirements7);
+      expect(res?.additionalRegistryUrls).toEqual([
         'http://its-a-secret:example.com/private-pypi/',
         'http://its-a-secret:example.com/private-pypi/',
         'http://its-a-secret:example.com/private-pypi/',
-        'http://its-a-secret:example.com/private-pypi/',
+        'http://${PIP_TEST_TOKEN1}:example.com/private-pypi/',
       ]);
     });
 
     it('should handle hashes', () => {
-      const res = extractPackageFile(requirements8, 'unused_file_name', {});
+      const res = extractPackageFile(requirements8);
       expect(res).toMatchSnapshot();
-      expect(res.deps).toHaveLength(3);
+      expect(res?.deps).toHaveLength(3);
     });
 
     it('should handle dependency and ignore env markers', () => {
-      const res = extractPackageFile(
-        requirementsWithEnvMarkers,
-        'unused_file_name',
-        {}
-      );
+      const res = extractPackageFile(requirementsWithEnvMarkers);
       expect(res).toEqual({
         deps: [
           {
@@ -170,18 +190,15 @@ describe('modules/manager/pip_requirements/extract', () => {
             currentVersion: '20.3.0',
             datasource: 'pypi',
             depName: 'attrs',
+            packageName: 'attrs',
           },
         ],
       });
     });
 
     it('should handle git packages', () => {
-      const res = extractPackageFile(
-        requirementsGitPackages,
-        'unused_file_name',
-        {}
-      );
-      expect(res.deps).toHaveLength(5);
+      const res = extractPackageFile(requirementsGitPackages);
+      expect(res?.deps).toHaveLength(5);
       expect(res).toEqual({
         deps: [
           {
@@ -221,6 +238,44 @@ describe('modules/manager/pip_requirements/extract', () => {
             datasource: 'git-tags',
           },
         ],
+      });
+    });
+
+    it('extracts a file with only --index-url flags', () => {
+      const res = extractPackageFile('--index-url https://example.com/pypi');
+      expect(res).toMatchObject({
+        deps: [],
+        registryUrls: ['https://example.com/pypi'],
+      });
+    });
+
+    it('extracts a file with only --extra-index-url flags', () => {
+      const res = extractPackageFile(
+        '--extra-index-url https://example.com/pypi',
+      );
+      expect(res).toMatchObject({
+        deps: [],
+        additionalRegistryUrls: ['https://example.com/pypi'],
+      });
+    });
+
+    it('extracts a file with only -r flags', () => {
+      const res = extractPackageFile('-r requirements-other.txt');
+      expect(res).toMatchObject({
+        deps: [],
+        managerData: {
+          requirementsFiles: ['requirements-other.txt'],
+        },
+      });
+    });
+
+    it('extracts a file with only -c flags', () => {
+      const res = extractPackageFile('-c constraints.txt');
+      expect(res).toMatchObject({
+        deps: [],
+        managerData: {
+          constraintsFiles: ['constraints.txt'],
+        },
       });
     });
   });

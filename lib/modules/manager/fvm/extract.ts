@@ -1,39 +1,34 @@
-import is from '@sindresorhus/is';
 import { logger } from '../../../logger';
-import { GithubTagsDatasource } from '../../datasource/github-tags';
-import type { PackageDependency, PackageFile } from '../types';
-
-interface FvmConfig {
-  flutterSdkVersion: string;
-}
+import { Json } from '../../../util/schema-utils';
+import { FlutterVersionDatasource } from '../../datasource/flutter-version';
+import type { PackageDependency, PackageFileContent } from '../types';
+import { FvmConfig } from './schema';
 
 export function extractPackageFile(
   content: string,
-  packageFile: string
-): PackageFile | null {
-  let fvmConfig: FvmConfig;
+  packageFile: string,
+): PackageFileContent | null {
+  let flutterVersion: string | undefined;
   try {
-    fvmConfig = JSON.parse(content);
+    const config = Json.pipe(FvmConfig).parse(content);
+    flutterVersion = config.flutter ?? config.flutterSdkVersion;
+
+    if (!flutterVersion) {
+      logger.debug(
+        { contents: config },
+        'FVM config does not have a flutter version specified',
+      );
+      return null;
+    }
   } catch (err) {
     logger.debug({ packageFile, err }, 'Invalid FVM config');
     return null;
   }
 
-  if (!fvmConfig.flutterSdkVersion) {
-    logger.debug(
-      { contents: fvmConfig },
-      'FVM config does not have flutterSdkVersion specified'
-    );
-    return null;
-  } else if (!is.string(fvmConfig.flutterSdkVersion)) {
-    logger.debug({ contents: fvmConfig }, 'flutterSdkVersion must be a string');
-    return null;
-  }
-
   const dep: PackageDependency = {
     depName: 'flutter',
-    currentValue: fvmConfig.flutterSdkVersion,
-    datasource: GithubTagsDatasource.id,
+    currentValue: flutterVersion,
+    datasource: FlutterVersionDatasource.id,
     packageName: 'flutter/flutter',
   };
   return { deps: [dep] };

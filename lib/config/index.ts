@@ -1,43 +1,61 @@
 import { logger } from '../logger';
-import { get, getLanguageList, getManagerList } from '../modules/manager';
+import { allManagersList, get } from '../modules/manager';
 import * as options from './options';
-import type { AllConfig, RenovateConfig, RenovateConfigStage } from './types';
+import type {
+  AllConfig,
+  ManagerConfig,
+  RenovateConfig,
+  RenovateConfigStage,
+} from './types';
 import { mergeChildConfig } from './utils';
 
 export { mergeChildConfig };
 
 export function getManagerConfig(
   config: RenovateConfig,
-  manager: string
-): RenovateConfig {
-  let managerConfig: RenovateConfig = {
+  manager: string,
+): ManagerConfig {
+  let managerConfig: ManagerConfig = {
     ...config,
-    language: null,
-    manager: null,
+    manager,
   };
-  const language = get(manager, 'language');
-  if (language) {
-    // TODO: fix types #7154
-    managerConfig = mergeChildConfig(managerConfig, config[language] as any);
+  const categories = get(manager, 'categories');
+  if (categories) {
+    managerConfig.categories = categories;
   }
-  // TODO: fix types #7154
+  // TODO: fix types #22198
   managerConfig = mergeChildConfig(managerConfig, config[manager] as any);
-  for (const i of getLanguageList().concat(getManagerList())) {
+  for (const i of allManagersList) {
     delete managerConfig[i];
   }
-  managerConfig.language = language;
-  managerConfig.manager = manager;
   return managerConfig;
+}
+
+export function removeGlobalConfig(
+  config: RenovateConfig,
+  keepInherited: boolean,
+): RenovateConfig {
+  const outputConfig: RenovateConfig = { ...config };
+  for (const option of options.getOptions()) {
+    if (keepInherited && option.inheritConfigSupport) {
+      continue;
+    }
+    if (option.globalOnly) {
+      delete outputConfig[option.name];
+    }
+  }
+  return outputConfig;
 }
 
 export function filterConfig(
   inputConfig: AllConfig,
-  targetStage: RenovateConfigStage
+  targetStage: RenovateConfigStage,
 ): AllConfig {
   logger.trace({ config: inputConfig }, `filterConfig('${targetStage}')`);
   const outputConfig: RenovateConfig = { ...inputConfig };
   const stages: (string | undefined)[] = [
     'global',
+    'inherit',
     'repository',
     'package',
     'branch',

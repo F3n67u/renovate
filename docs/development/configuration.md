@@ -24,6 +24,9 @@ If you need an alternate location or name, set it in the environment variable `R
 For example `RENOVATE_CONFIG_FILE=myconfig.js` or `RENOVATE_CONFIG_FILE=myconfig.json` and not `RENOVATE_CONFIG_FILE=myconfig`.
 If none is provided, or the file type is invalid, Renovate will fail.
 
+If you are in an ESM repo (`"type": "module"` in `package.json`) then you must use a `.cjs` extension and set `RENOVATE_CONFIG_FILE`.
+For example `RENOVATE_CONFIG_FILE=myconfig.cjs`.
+
 Using a configuration file gives you very granular configuration options.
 For instance, you can override most settings at the global (file), repository, or package level.
 e.g. apply one set of labels for `backend/package.json` and a different set of labels for `frontend/package.json` in the same repository.
@@ -32,7 +35,7 @@ e.g. apply one set of labels for `backend/package.json` and a different set of l
 module.exports = {
   npmrc: '//registry.npmjs.org/:_authToken=abc123',
   baseDir: '/tmp/renovate',
-  includeForks: true,
+  forkProcessing: 'enabled',
   gradle: { enabled: false },
 };
 ```
@@ -66,6 +69,6 @@ If you add configuration options to your `package.json` then these will override
 
 ## Configuration Options
 
-Please see [https://docs.renovatebot.com/configuration-options/](https://docs.renovatebot.com/configuration-options/) for a list of user-facing configuration options.
+Please read [our list of user-facing configuration options](https://docs.renovatebot.com/configuration-options/).
 
 For further options when running your own instance of Renovate, please see the full config options file at `lib/config/options/index.ts`.

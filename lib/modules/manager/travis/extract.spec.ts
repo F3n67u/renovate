@@ -1,12 +1,12 @@
-import { loadFixture } from '../../../../test/util';
+import { Fixtures } from '../../../../test/fixtures';
 import { extractPackageFile } from '.';
 
-const invalidYAML = loadFixture('invalid.yml');
-const matrixYAMLwithNodeSyntaxString = loadFixture('matrix_jobs.yml');
-const matrixYAMLwithNodeSyntaxArray = loadFixture('matrix_jobs_array.yml');
-const matrixYAMLwithNodeSyntaxArray2 = loadFixture('matrix_jobs_array2.yml');
-const matrixYAMLwithNodeSyntaxAlias = loadFixture('matrix_alias.yml');
-const invalidMatrixYAML = loadFixture('matrix_invalid.yml');
+const invalidYAML = Fixtures.get('invalid.yml');
+const matrixYAMLwithNodeSyntaxString = Fixtures.get('matrix_jobs.yml');
+const matrixYAMLwithNodeSyntaxArray = Fixtures.get('matrix_jobs_array.yml');
+const matrixYAMLwithNodeSyntaxArray2 = Fixtures.get('matrix_jobs_array2.yml');
+const matrixYAMLwithNodeSyntaxAlias = Fixtures.get('matrix_alias.yml');
+const invalidMatrixYAML = Fixtures.get('matrix_invalid.yml');
 
 describe('modules/manager/travis/extract', () => {
   describe('extractPackageFile()', () => {
@@ -18,7 +18,7 @@ describe('modules/manager/travis/extract', () => {
     it('returns results', () => {
       const res = extractPackageFile('node_js:\n  - 6\n  - 8\n');
       expect(res).toMatchSnapshot();
-      expect(res.deps).toHaveLength(2);
+      expect(res?.deps).toHaveLength(2);
     });
 
     it('should handle invalid YAML', () => {
@@ -32,9 +32,8 @@ describe('modules/manager/travis/extract', () => {
         deps: [
           {
             currentValue: '11.10.1',
-            datasource: 'github-tags',
+            datasource: 'node-version',
             depName: 'node',
-            packageName: 'nodejs/node',
           },
         ],
       });
@@ -46,15 +45,13 @@ describe('modules/manager/travis/extract', () => {
         deps: [
           {
             currentValue: '11.10.1',
-            datasource: 'github-tags',
+            datasource: 'node-version',
             depName: 'node',
-            packageName: 'nodejs/node',
           },
           {
             currentValue: '11.10.2',
-            datasource: 'github-tags',
+            datasource: 'node-version',
             depName: 'node',
-            packageName: 'nodejs/node',
           },
         ],
       });
@@ -66,15 +63,13 @@ describe('modules/manager/travis/extract', () => {
         deps: [
           {
             currentValue: '11.10.1',
-            datasource: 'github-tags',
+            datasource: 'node-version',
             depName: 'node',
-            packageName: 'nodejs/node',
           },
           {
             currentValue: '11.10.2',
-            datasource: 'github-tags',
+            datasource: 'node-version',
             depName: 'node',
-            packageName: 'nodejs/node',
           },
         ],
       });
@@ -86,9 +81,8 @@ describe('modules/manager/travis/extract', () => {
         deps: [
           {
             currentValue: '11.10.1',
-            datasource: 'github-tags',
+            datasource: 'node-version',
             depName: 'node',
-            packageName: 'nodejs/node',
           },
         ],
       });

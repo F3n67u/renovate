@@ -1,4 +1,4 @@
-import { fs, getConfig, mocked } from '../../../../test/util';
+import { fs, mocked, partial } from '../../../../test/util';
 import type { RenovateConfig } from '../../../config/types';
 import * as _html from '../../../modules/manager/html';
 import * as _fileMatch from './file-match';
@@ -16,25 +16,28 @@ describe('workers/repository/extract/manager-files', () => {
     let config: RenovateConfig;
 
     beforeEach(() => {
-      jest.resetAllMocks();
-      config = getConfig();
+      config = partial<RenovateConfig>();
     });
 
     it('returns empty of manager is disabled', async () => {
-      const managerConfig = { manager: 'travis', enabled: false };
+      const managerConfig = { manager: 'travis', enabled: false, fileList: [] };
       const res = await getManagerPackageFiles(managerConfig);
       expect(res).toHaveLength(0);
     });
 
     it('returns empty of manager is not enabled', async () => {
       config.enabledManagers = ['npm'];
-      const managerConfig = { manager: 'docker', enabled: true };
+      const managerConfig = { manager: 'docker', enabled: true, fileList: [] };
       const res = await getManagerPackageFiles(managerConfig);
       expect(res).toHaveLength(0);
     });
 
     it('skips files if null content returned', async () => {
-      const managerConfig = { manager: 'npm', enabled: true };
+      const managerConfig = {
+        manager: 'npm',
+        fileList: [],
+        enabled: true,
+      };
       fileMatch.getMatchingFiles.mockReturnValue(['package.json']);
       const res = await getManagerPackageFiles(managerConfig);
       expect(res).toHaveLength(0);
@@ -49,13 +52,13 @@ describe('workers/repository/extract/manager-files', () => {
       fileMatch.getMatchingFiles.mockReturnValue(['Dockerfile']);
       fs.readLocalFile.mockResolvedValueOnce('some content');
       html.extractPackageFile = jest.fn(() => ({
-        deps: [{}, { replaceString: 'abc' }],
+        deps: [{}, { replaceString: 'abc', packageName: 'p' }],
       })) as never;
       const res = await getManagerPackageFiles(managerConfig);
       expect(res).toEqual([
         {
           packageFile: 'Dockerfile',
-          deps: [{ depIndex: 0 }, { depIndex: 1, replaceString: 'abc' }],
+          deps: [{}, { replaceString: 'abc', packageName: 'p', depName: 'p' }],
         },
       ]);
     });
@@ -68,13 +71,12 @@ describe('workers/repository/extract/manager-files', () => {
       };
       fileMatch.getMatchingFiles.mockReturnValue(['package.json']);
       fs.readLocalFile.mockResolvedValueOnce(
-        '{"dependencies":{"chalk":"2.0.0"}}'
+        '{"dependencies":{"chalk":"2.0.0"}}',
       );
       const res = await getManagerPackageFiles(managerConfig);
-      expect(res).toMatchSnapshot([
+      expect(res).toMatchObject([
         {
           packageFile: 'package.json',
-          packageJsonType: 'app',
           deps: [
             {
               currentValue: '2.0.0',

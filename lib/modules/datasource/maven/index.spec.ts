@@ -1,19 +1,34 @@
-import { ReleaseResult, getPkgReleases } from '..';
+import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { mockClient } from 'aws-sdk-client-mock';
+import { codeBlock } from 'common-tags';
+import { GoogleAuth as _googleAuth } from 'google-auth-library';
+import { DateTime } from 'luxon';
+import type { Release, ReleaseResult } from '..';
+import { getPkgReleases } from '..';
+import { Fixtures } from '../../../../test/fixtures';
 import * as httpMock from '../../../../test/http-mock';
-import { loadFixture } from '../../../../test/util';
+import { mocked } from '../../../../test/util';
 import { EXTERNAL_HOST_ERROR } from '../../../constants/error-messages';
 import * as hostRules from '../../../util/host-rules';
 import { id as versioning } from '../../versioning/maven';
+import { postprocessRelease } from '../postprocess-release';
+import { MAVEN_REPO } from './common';
 import { MavenDatasource } from '.';
+
+const googleAuth = mocked(_googleAuth);
+jest.mock('google-auth-library');
 
 const datasource = MavenDatasource.id;
 
 const baseUrl = 'https://repo.maven.apache.org/maven2';
 const baseUrlCustom = 'https://custom.registry.renovatebot.com';
 
+const arRegistry = 'maven.pkg.dev/some-project/some-repository';
+const baseUrlAR = `artifactregistry://${arRegistry}`;
+const baseUrlARHttps = `https://${arRegistry}`;
+
 interface SnapshotOpts {
   version: string;
-  jarStatus?: number;
   meta?: string;
 }
 
@@ -23,9 +38,7 @@ interface MockOpts {
   meta?: string | null;
   pom?: string | null;
   latest?: string;
-  jars?: Record<string, number> | null;
   snapshots?: SnapshotOpts[] | null;
-  html?: string;
 }
 
 function mockGenericPackage(opts: MockOpts = {}) {
@@ -33,39 +46,11 @@ function mockGenericPackage(opts: MockOpts = {}) {
     dep = 'org.example:package',
     base = baseUrl,
     latest = '2.0.0',
-    html,
+    snapshots,
   } = opts;
   const meta =
-    opts.meta === undefined ? loadFixture('metadata.xml') : opts.meta;
-  const pom = opts.pom === undefined ? loadFixture('pom.xml') : opts.pom;
-  const jars =
-    opts.jars === undefined
-      ? {
-          '0.0.1': 200,
-          '1.0.0': 200,
-          '1.0.1': 404,
-          '1.0.2': 500,
-          '2.0.0': 200,
-        }
-      : opts.jars;
-
-  const snapshots =
-    opts.snapshots === undefined
-      ? [
-          {
-            version: '1.0.3-SNAPSHOT',
-            meta: loadFixture('metadata-snapshot-version.xml'),
-            jarStatus: 200,
-          },
-          {
-            version: '1.0.4-SNAPSHOT',
-            meta: loadFixture('metadata-snapshot-version-invalid.xml'),
-          },
-          {
-            version: '1.0.5-SNAPSHOT',
-          },
-        ]
-      : opts.snapshots;
+    opts.meta === undefined ? Fixtures.get('metadata.xml') : opts.meta;
+  const pom = opts.pom === undefined ? Fixtures.get('pom.xml') : opts.pom;
 
   const scope = httpMock.scope(base);
 
@@ -76,33 +61,26 @@ function mockGenericPackage(opts: MockOpts = {}) {
     scope.get(`/${packagePath}/maven-metadata.xml`).reply(200, meta);
   }
 
-  if (html) {
-    scope.get(`/${packagePath}/index.html`).reply(200, html);
-  } else if (html === null) {
-    scope.get(`/${packagePath}/index.html`).reply(404);
-  }
-
   if (pom) {
-    scope
-      .get(`/${packagePath}/${latest}/${artifact}-${latest}.pom`)
-      .reply(200, pom);
-  }
-
-  if (jars) {
-    Object.entries(jars).forEach(([version, status]) => {
-      const [major, minor, patch] = version
+    if (latest.endsWith('-SNAPSHOT')) {
+      const [major, minor, patch] = latest
         .replace('-SNAPSHOT', '')
         .split('.')
         .map((x) => parseInt(x, 10))
         .map((x) => (x < 10 ? `0${x}` : `${x}`));
-      const timestamp = `2020-01-01T${major}:${minor}:${patch}.000Z`;
-      const headers: httpMock.ReplyHeaders = version.startsWith('0.')
-        ? {}
-        : { 'Last-Modified': timestamp };
       scope
-        .head(`/${packagePath}/${version}/${artifact}-${version}.pom`)
-        .reply(status, '', headers);
-    });
+        .get(
+          `/${packagePath}/${latest}/${artifact}-${latest.replace(
+            '-SNAPSHOT',
+            '',
+          )}-20200101.${major}${minor}${patch}-${parseInt(patch, 10)}.pom`,
+        )
+        .reply(200, pom);
+    } else {
+      scope
+        .get(`/${packagePath}/${latest}/${artifact}-${latest}.pom`)
+        .reply(200, pom);
+    }
   }
 
   if (snapshots) {
@@ -116,40 +94,15 @@ function mockGenericPackage(opts: MockOpts = {}) {
           .get(`/${packagePath}/${snapshot.version}/maven-metadata.xml`)
           .reply(404, '');
       }
-
-      if (snapshot.jarStatus) {
-        const [major, minor, patch] = snapshot.version
-          .replace('-SNAPSHOT', '')
-          .split('.')
-          .map((x) => parseInt(x, 10))
-          .map((x) => (x < 10 ? `0${x}` : `${x}`));
-        const timestamp = `2020-01-01T${major}:${minor}:${patch}.000Z`;
-        scope
-          .head(
-            `/${packagePath}/${
-              snapshot.version
-            }/${artifact}-${snapshot.version.replace(
-              '-SNAPSHOT',
-              ''
-            )}-20200101.${major}${minor}${patch}-${parseInt(patch, 10)}.pom`
-          )
-          .reply(snapshot.jarStatus, '', { 'Last-Modified': timestamp });
-      } else {
-        scope
-          .head(
-            `/${packagePath}/${snapshot.version}/${artifact}-${snapshot.version}.pom`
-          )
-          .reply(404, '');
-      }
     });
   }
 }
 
 function get(
-  depName = 'org.example:package',
+  packageName = 'org.example:package',
   ...registryUrls: string[]
 ): Promise<ReleaseResult | null> {
-  const conf = { versioning, datasource, depName };
+  const conf = { versioning, datasource, packageName };
   return getPkgReleases(registryUrls ? { ...conf, registryUrls } : conf);
 }
 
@@ -160,19 +113,15 @@ describe('modules/datasource/maven/index', () => {
       matchHost: 'custom.registry.renovatebot.com',
       token: '123test',
     });
-    jest.resetAllMocks();
   });
 
   afterEach(() => {
     hostRules.clear();
-    delete process.env.RENOVATE_EXPERIMENTAL_NO_MAVEN_POM_CHECK;
   });
 
   it('returns null when metadata is not found', async () => {
     httpMock
       .scope(baseUrl)
-      .get('/org/example/package/index.html')
-      .reply(404)
       .get('/org/example/package/maven-metadata.xml')
       .reply(404);
 
@@ -182,22 +131,24 @@ describe('modules/datasource/maven/index', () => {
   });
 
   it('returns releases', async () => {
-    mockGenericPackage({ html: null });
+    mockGenericPackage();
 
     const res = await get();
 
     expect(res).toMatchSnapshot();
   });
 
-  it('returns html-based releases', async () => {
-    process.env.RENOVATE_EXPERIMENTAL_NO_MAVEN_POM_CHECK = 'true';
-
+  it('returns releases when only snapshot', async () => {
+    const meta = Fixtures.get('metadata-snapshot-version.xml');
     mockGenericPackage({
-      latest: '2.0.0',
-      jars: null,
-      html: loadFixture('index.html'),
-      meta: loadFixture('index.xml'),
-      snapshots: null,
+      meta: Fixtures.get('metadata-snapshot-only.xml'),
+      latest: '1.0.3-SNAPSHOT',
+      snapshots: [
+        {
+          version: '1.0.3-SNAPSHOT',
+          meta,
+        },
+      ],
     });
 
     const res = await get();
@@ -207,13 +158,40 @@ describe('modules/datasource/maven/index', () => {
       group: 'org.example',
       homepage: 'https://package.example.org/about',
       name: 'package',
+      packageScope: 'org.example',
       registryUrl: 'https://repo.maven.apache.org/maven2',
-      releases: [
-        { version: '1.0.0', releaseTimestamp: '2021-02-22T14:43:00.000Z' },
-        { version: '1.0.1', releaseTimestamp: '2021-04-12T15:51:00.000Z' },
-        { version: '1.0.2', releaseTimestamp: '2021-06-16T12:47:00.000Z' },
-        { version: '2.0.0', releaseTimestamp: '2021-06-18T16:24:00.000Z' },
+      releases: [{ version: '1.0.3-SNAPSHOT' }],
+    });
+  });
+
+  it('handles invalid snapshot', async () => {
+    const meta = Fixtures.get('metadata-snapshot-version-invalid.xml');
+    httpMock
+      .scope(MAVEN_REPO)
+      .get('/org/example/package/1.0.3-SNAPSHOT/package-1.0.3-SNAPSHOT.pom')
+      .reply(200, meta);
+
+    mockGenericPackage({
+      meta: Fixtures.get('metadata-snapshot-only.xml'),
+      pom: null,
+      latest: '1.0.3-SNAPSHOT',
+      snapshots: [
+        {
+          version: '1.0.3-SNAPSHOT',
+          meta,
+        },
       ],
+    });
+
+    const res = await get();
+
+    expect(res).toEqual({
+      display: 'org.example:package',
+      group: 'org.example',
+      name: 'package',
+      packageScope: 'org.example',
+      registryUrl: 'https://repo.maven.apache.org/maven2',
+      releases: [{ version: '1.0.3-SNAPSHOT' }],
     });
   });
 
@@ -225,41 +203,16 @@ describe('modules/datasource/maven/index', () => {
     expect(res).toMatchSnapshot();
   });
 
-  it('collects releases from all registry urls', async () => {
-    mockGenericPackage({ html: null });
-    mockGenericPackage({
-      base: baseUrlCustom,
-      meta: loadFixture('metadata-extra.xml'),
-      latest: '3.0.0',
-      jars: { '3.0.0': 200 },
-      snapshots: [],
-    });
-
-    const { releases } = await get(
-      'org.example:package',
-      baseUrl,
-      baseUrlCustom
-    );
-
-    expect(releases).toMatchObject([
-      { version: '0.0.1' },
-      { version: '1.0.0' },
-      { version: '1.0.3-SNAPSHOT' },
-      { version: '2.0.0' },
-      { version: '3.0.0' },
-    ]);
-  });
-
   it('falls back to next registry url', async () => {
-    mockGenericPackage({ html: null });
+    mockGenericPackage();
     httpMock
       .scope('https://failed_repo')
       .get('/org/example/package/maven-metadata.xml')
-      .reply(404, null);
+      .reply(404);
     httpMock
       .scope('https://unauthorized_repo')
       .get('/org/example/package/maven-metadata.xml')
-      .reply(403, null);
+      .reply(403);
     httpMock
       .scope('https://empty_repo')
       .get('/org/example/package/maven-metadata.xml')
@@ -275,7 +228,7 @@ describe('modules/datasource/maven/index', () => {
       'https://unauthorized_repo/',
       'https://empty_repo',
       'https://unknown_error',
-      baseUrl
+      baseUrl,
     );
 
     expect(res).toMatchSnapshot();
@@ -294,33 +247,33 @@ describe('modules/datasource/maven/index', () => {
     const base = baseUrl.replace('https', 'http');
     mockGenericPackage({ base });
 
-    const { releases } = await get(
+    const res = await get(
       'org.example:package',
       'ftp://protocol_error_repo',
-      base
+      base,
     );
 
-    expect(releases).toMatchSnapshot();
+    expect(res?.releases).toMatchSnapshot();
   });
 
   it('skips registry with invalid metadata structure', async () => {
-    mockGenericPackage({ html: null });
+    mockGenericPackage();
     httpMock
       .scope('https://invalid_metadata_repo')
       .get('/org/example/package/maven-metadata.xml')
-      .reply(200, loadFixture('metadata-invalid.xml'));
+      .reply(200, Fixtures.get('metadata-invalid.xml'));
 
     const res = await get(
       'org.example:package',
       'https://invalid_metadata_repo',
-      baseUrl
+      baseUrl,
     );
 
     expect(res).toMatchSnapshot();
   });
 
   it('skips registry with invalid XML', async () => {
-    mockGenericPackage({ html: null });
+    mockGenericPackage();
     httpMock
       .scope('https://invalid_metadata_repo')
       .get('/org/example/package/maven-metadata.xml')
@@ -329,43 +282,107 @@ describe('modules/datasource/maven/index', () => {
     const res = await get(
       'org.example:package',
       'https://invalid_metadata_repo',
-      baseUrl
+      baseUrl,
     );
 
     expect(res).toMatchSnapshot();
   });
 
   it('handles optional slash at the end of registry url', async () => {
-    mockGenericPackage({ html: null });
+    mockGenericPackage();
     const resA = await get('org.example:package', baseUrl.replace(/\/+$/, ''));
-    mockGenericPackage({ html: null });
+    mockGenericPackage();
     const resB = await get('org.example:package', baseUrl.replace(/\/*$/, '/'));
     expect(resA).not.toBeNull();
     expect(resB).not.toBeNull();
-    expect(resA.releases).toEqual(resB.releases);
+    expect(resA?.releases).toEqual(resB?.releases);
   });
 
   it('returns null for invalid registryUrls', async () => {
     const res = await get(
       'org.example:package',
 
-      '${project.baseUri}../../repository/'
+      '${project.baseUri}../../repository/',
     );
     expect(res).toBeNull();
   });
 
   it('supports scm.url values prefixed with "scm:"', async () => {
-    const pom = loadFixture('pom.scm-prefix.xml');
-    mockGenericPackage({ pom, html: null });
+    const pom = Fixtures.get('pom.scm-prefix.xml');
+    mockGenericPackage({ pom });
 
-    const { sourceUrl } = await get();
+    const res = await get();
 
-    expect(sourceUrl).toBe('https://github.com/example/test');
+    expect(res?.sourceUrl).toBe('https://github.com/example/test');
+  });
+
+  describe('supports relocation', () => {
+    it('with only groupId present', async () => {
+      const pom = codeBlock`
+        <project>
+          <distributionManagement>
+            <relocation>
+              <groupId>io.example</groupId>
+            </relocation>
+          </distributionManagement>
+        </project>
+      `;
+      mockGenericPackage({ pom });
+
+      const res = await get();
+
+      expect(res).toMatchObject({
+        replacementName: 'io.example:package',
+        replacementVersion: '2.0.0',
+      });
+    });
+
+    it('with only artifactId present', async () => {
+      const pom = codeBlock`
+        <project>
+          <distributionManagement>
+            <relocation>
+              <artifactId>foo</artifactId>
+            </relocation>
+          </distributionManagement>
+        </project>
+      `;
+      mockGenericPackage({ pom });
+
+      const res = await get();
+
+      expect(res).toMatchObject({
+        replacementName: 'org.example:foo',
+        replacementVersion: '2.0.0',
+      });
+    });
+
+    it('with all elments present', async () => {
+      const pom = codeBlock`
+        <project>
+          <distributionManagement>
+            <relocation>
+              <groupId>io.example</groupId>
+              <artifactId>foo</artifactId>
+              <version>1.2.3</version>
+              <message>test relocation</message>
+            </relocation>
+          </distributionManagement>
+        </project>
+      `;
+      mockGenericPackage({ pom });
+
+      const res = await get();
+
+      expect(res).toMatchObject({
+        replacementName: 'io.example:foo',
+        replacementVersion: '1.2.3',
+        deprecationMessage: 'test relocation',
+      });
+    });
   });
 
   it('removes authentication header after redirect', async () => {
-    process.env.RENOVATE_EXPERIMENTAL_NO_MAVEN_POM_CHECK = 'true';
-
     const frontendHost = 'frontend_for_private_s3_repository';
     const frontendUrl = `https://${frontendHost}/maven2`;
     const backendUrl = 'https://private_s3_repository/maven2';
@@ -396,33 +413,126 @@ describe('modules/datasource/maven/index', () => {
     httpMock
       .scope(backendUrl, { badheaders: ['authorization'] })
       .get(`${metadataPath}${queryStr}`)
-      .reply(200, loadFixture('metadata.xml'))
+      .reply(200, Fixtures.get('metadata.xml'))
       .get(`${pomfilePath}${queryStr}`)
-      .reply(200, loadFixture('pom.xml'));
+      .reply(200, Fixtures.get('pom.xml'));
 
     const res = await get('org.example:package', frontendUrl);
 
     expect(res).toMatchSnapshot();
   });
 
+  it('supports artifactregistry urls with auth', async () => {
+    const pomfilePath = '/org/example/package/2.0.0/package-2.0.0.pom';
+    hostRules.clear();
+
+    httpMock
+      .scope(baseUrlARHttps)
+      .get('/org/example/package/maven-metadata.xml')
+      .matchHeader(
+        'authorization',
+        'Basic b2F1dGgyYWNjZXNzdG9rZW46c29tZS10b2tlbg==',
+      )
+      .reply(200, Fixtures.get('metadata.xml'));
+
+    httpMock
+      .scope(baseUrlARHttps)
+      .get(pomfilePath)
+      .matchHeader(
+        'authorization',
+        'Basic b2F1dGgyYWNjZXNzdG9rZW46c29tZS10b2tlbg==',
+      )
+      .reply(200, Fixtures.get('pom.xml'));
+
+    googleAuth.mockImplementation(
+      jest.fn().mockImplementation(() => ({
+        getAccessToken: jest.fn().mockResolvedValue('some-token'),
+      })),
+    );
+
+    const res = await get('org.example:package', baseUrlAR);
+
+    expect(res).toEqual({
+      display: 'org.example:package',
+      group: 'org.example',
+      homepage: 'https://package.example.org/about',
+      name: 'package',
+      packageScope: 'org.example',
+      registryUrl:
+        'artifactregistry://maven.pkg.dev/some-project/some-repository',
+      releases: [
+        { version: '0.0.1' },
+        { version: '1.0.0' },
+        { version: '1.0.1' },
+        { version: '1.0.2' },
+        { version: '1.0.3-SNAPSHOT' },
+        { version: '1.0.4-SNAPSHOT' },
+        { version: '1.0.5-SNAPSHOT' },
+        { version: '2.0.0' },
+      ],
+      isPrivate: true,
+    });
+    expect(googleAuth).toHaveBeenCalledTimes(2);
+  });
+
+  it('supports artifactregistry urls without auth', async () => {
+    const pomfilePath = '/org/example/package/2.0.0/package-2.0.0.pom';
+    hostRules.clear();
+
+    httpMock
+      .scope(baseUrlARHttps)
+      .get('/org/example/package/maven-metadata.xml')
+      .reply(200, Fixtures.get('metadata.xml'));
+
+    httpMock
+      .scope(baseUrlARHttps)
+      .get(pomfilePath)
+      .reply(200, Fixtures.get('pom.xml'));
+
+    googleAuth.mockImplementation(
+      jest.fn().mockImplementation(() => ({
+        getAccessToken: jest.fn().mockResolvedValue(undefined),
+      })),
+    );
+
+    const res = await get('org.example:package', baseUrlAR);
+
+    expect(res).toEqual({
+      display: 'org.example:package',
+      group: 'org.example',
+      homepage: 'https://package.example.org/about',
+      name: 'package',
+      packageScope: 'org.example',
+      registryUrl:
+        'artifactregistry://maven.pkg.dev/some-project/some-repository',
+      releases: [
+        { version: '0.0.1' },
+        { version: '1.0.0' },
+        { version: '1.0.1' },
+        { version: '1.0.2' },
+        { version: '1.0.3-SNAPSHOT' },
+        { version: '1.0.4-SNAPSHOT' },
+        { version: '1.0.5-SNAPSHOT' },
+        { version: '2.0.0' },
+      ],
+      isPrivate: true,
+    });
+    expect(googleAuth).toHaveBeenCalledTimes(2);
+  });
+
   describe('fetching parent info', () => {
     const parentPackage = {
       dep: 'org.example:parent',
       meta: null,
-      pom: loadFixture('parent-scm-homepage/pom.xml'),
+      pom: Fixtures.get('parent-scm-homepage/pom.xml'),
       latest: '1.0.0',
-      jars: null,
-      snapshots: [],
     };
 
     it('should get source and homepage from parent', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-no-info/meta.xml'),
-        pom: loadFixture('child-no-info/pom.xml'),
+        meta: Fixtures.get('child-no-info/meta.xml'),
+        pom: Fixtures.get('child-no-info/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
       mockGenericPackage(parentPackage);
 
@@ -436,12 +546,9 @@ describe('modules/datasource/maven/index', () => {
 
     it('should deal with missing parent fields', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-empty/meta.xml'),
-        pom: loadFixture('child-empty/pom.xml'),
+        meta: Fixtures.get('child-empty/meta.xml'),
+        pom: Fixtures.get('child-empty/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
 
       const res = await get();
@@ -456,33 +563,26 @@ describe('modules/datasource/maven/index', () => {
     });
 
     it('should deal with circular hierarchy', async () => {
-      const parentPom = loadFixture('child-parent-cycle/parent.pom.xml');
+      const parentPom = Fixtures.get('child-parent-cycle/parent.pom.xml');
       const parentPomMock = {
         dep: 'org.example:parent',
         meta: null,
         pom: parentPom,
         latest: '2.0.0',
-        jars: null,
-        snapshots: [],
       };
 
-      const childMeta = loadFixture('child-parent-cycle/child.meta.xml');
-      const childPom = loadFixture('child-parent-cycle/child.pom.xml');
+      const childMeta = Fixtures.get('child-parent-cycle/child.meta.xml');
+      const childPom = Fixtures.get('child-parent-cycle/child.pom.xml');
       const childPomMock = {
         dep: 'org.example:child',
         meta: null,
         pom: childPom,
         latest: '2.0.0',
-        jars: null,
-        snapshots: [],
       };
 
       mockGenericPackage({
         ...childPomMock,
         meta: childMeta,
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
       mockGenericPackage(parentPomMock);
       mockGenericPackage(childPomMock);
@@ -499,12 +599,9 @@ describe('modules/datasource/maven/index', () => {
 
     it('should get source from own pom and homepage from parent', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-scm/meta.xml'),
-        pom: loadFixture('child-scm/pom.xml'),
+        meta: Fixtures.get('child-scm/meta.xml'),
+        pom: Fixtures.get('child-scm/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
       mockGenericPackage(parentPackage);
 
@@ -518,12 +615,9 @@ describe('modules/datasource/maven/index', () => {
 
     it('should get homepage from own pom and source from parent', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-url/meta.xml'),
-        pom: loadFixture('child-url/pom.xml'),
+        meta: Fixtures.get('child-url/meta.xml'),
+        pom: Fixtures.get('child-url/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
       mockGenericPackage(parentPackage);
 
@@ -537,12 +631,9 @@ describe('modules/datasource/maven/index', () => {
 
     it('should get homepage and source from own pom', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-all-info/meta.xml'),
-        pom: loadFixture('child-all-info/pom.xml'),
+        meta: Fixtures.get('child-all-info/meta.xml'),
+        pom: Fixtures.get('child-all-info/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
 
       const res = await get();
@@ -555,12 +646,9 @@ describe('modules/datasource/maven/index', () => {
 
     it('should be able to detect git@github.com:child-scm as valid sourceUrl', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-scm-gitatcolon/meta.xml'),
-        pom: loadFixture('child-scm-gitatcolon/pom.xml'),
+        meta: Fixtures.get('child-scm-gitatcolon/meta.xml'),
+        pom: Fixtures.get('child-scm-gitatcolon/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
 
       const res = await get();
@@ -572,12 +660,9 @@ describe('modules/datasource/maven/index', () => {
 
     it('should be able to detect git@github.com/child-scm as valid sourceUrl', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-scm-gitatslash/meta.xml'),
-        pom: loadFixture('child-scm-gitatslash/pom.xml'),
+        meta: Fixtures.get('child-scm-gitatslash/meta.xml'),
+        pom: Fixtures.get('child-scm-gitatslash/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
 
       const res = await get();
@@ -589,18 +674,227 @@ describe('modules/datasource/maven/index', () => {
 
     it('should be able to detect git://@github.com/child-scm as valid sourceUrl', async () => {
       mockGenericPackage({
-        meta: loadFixture('child-scm-gitprotocol/meta.xml'),
-        pom: loadFixture('child-scm-gitprotocol/pom.xml'),
+        meta: Fixtures.get('child-scm-gitprotocol/meta.xml'),
+        pom: Fixtures.get('child-scm-gitprotocol/pom.xml'),
         latest: '2.0.0',
-        jars: { '2.0.0': 200 },
-        snapshots: [],
-        html: null,
       });
 
       const res = await get();
 
       expect(res).toMatchObject({
         sourceUrl: 'https://github.com/child-scm/child',
+      });
+    });
+  });
+
+  describe('post-fetch release validation', () => {
+    it('returns null for 404', async () => {
+      httpMock
+        .scope(MAVEN_REPO)
+        .head('/foo/bar/1.2.3/bar-1.2.3.pom')
+        .reply(404);
+
+      const res = await postprocessRelease(
+        { datasource, packageName: 'foo:bar', registryUrl: MAVEN_REPO },
+        { version: '1.2.3' },
+      );
+
+      expect(res).toBeNull();
+    });
+
+    it('returns null for unknown error', async () => {
+      httpMock
+        .scope(MAVEN_REPO)
+        .head('/foo/bar/1.2.3/bar-1.2.3.pom')
+        .replyWithError('unknown error');
+
+      const res = await postprocessRelease(
+        { datasource, packageName: 'foo:bar', registryUrl: MAVEN_REPO },
+        { version: '1.2.3' },
+      );
+
+      expect(res).toBeNull();
+    });
+
+    it('returns original value for 200 response', async () => {
+      httpMock
+        .scope(MAVEN_REPO)
+        .head('/foo/bar/1.2.3/bar-1.2.3.pom')
+        .reply(200);
+      const releaseOrig: Release = { version: '1.2.3' };
+
+      const res = await postprocessRelease(
+        { datasource, packageName: 'foo:bar', registryUrl: MAVEN_REPO },
+        releaseOrig,
+      );
+
+      expect(res).toBe(releaseOrig);
+    });
+
+    it('returns original value for 200 response with versionOrig', async () => {
+      httpMock
+        .scope(MAVEN_REPO)
+        .head('/foo/bar/1.2.3/bar-1.2.3.pom')
+        .reply(200);
+      const releaseOrig: Release = { version: '1.2', versionOrig: '1.2.3' };
+
+      const res = await postprocessRelease(
+        { datasource, packageName: 'foo:bar', registryUrl: MAVEN_REPO },
+        releaseOrig,
+      );
+
+      expect(res).toBe(releaseOrig);
+    });
+
+    it('returns original value for invalid configs', async () => {
+      const releaseOrig: Release = { version: '1.2.3' };
+      expect(
+        await postprocessRelease(
+          { datasource, registryUrl: MAVEN_REPO },
+          releaseOrig,
+        ),
+      ).toBe(releaseOrig);
+      expect(
+        await postprocessRelease(
+          { datasource, packageName: 'foo:bar' },
+          releaseOrig,
+        ),
+      ).toBe(releaseOrig);
+    });
+
+    it('adds releaseTimestamp', async () => {
+      httpMock
+        .scope(MAVEN_REPO)
+        .head('/foo/bar/1.2.3/bar-1.2.3.pom')
+        .reply(200, '', { 'Last-Modified': '2024-01-01T00:00:00.000Z' });
+
+      const res = await postprocessRelease(
+        { datasource, packageName: 'foo:bar', registryUrl: MAVEN_REPO },
+        { version: '1.2.3' },
+      );
+
+      expect(res).toEqual({
+        version: '1.2.3',
+        releaseTimestamp: '2024-01-01T00:00:00.000Z',
+      });
+    });
+
+    describe('S3', () => {
+      const s3mock = mockClient(S3Client);
+
+      afterEach(() => {
+        s3mock.reset();
+      });
+
+      it('checks package', async () => {
+        s3mock
+          .on(HeadObjectCommand, {
+            Bucket: 'bucket',
+            Key: 'foo/bar/1.2.3/bar-1.2.3.pom',
+          })
+          .resolvesOnce({});
+
+        const res = await postprocessRelease(
+          { datasource, packageName: 'foo:bar', registryUrl: 's3://bucket' },
+          { version: '1.2.3' },
+        );
+
+        expect(res).toEqual({ version: '1.2.3' });
+      });
+
+      it('supports timestamp', async () => {
+        s3mock
+          .on(HeadObjectCommand, {
+            Bucket: 'bucket',
+            Key: 'foo/bar/1.2.3/bar-1.2.3.pom',
+          })
+          .resolvesOnce({
+            LastModified: DateTime.fromISO(
+              '2024-01-01T00:00:00.000Z',
+            ).toJSDate(),
+          });
+
+        const res = await postprocessRelease(
+          { datasource, packageName: 'foo:bar', registryUrl: 's3://bucket' },
+          { version: '1.2.3' },
+        );
+
+        expect(res).toEqual({
+          version: '1.2.3',
+          releaseTimestamp: '2024-01-01T00:00:00.000Z',
+        });
+      });
+
+      it('returns null for deleted object', async () => {
+        s3mock
+          .on(HeadObjectCommand, {
+            Bucket: 'bucket',
+            Key: 'foo/bar/1.2.3/bar-1.2.3.pom',
+          })
+          .resolvesOnce({ DeleteMarker: true });
+
+        const releaseOrig = { version: '1.2.3' };
+
+        const res = await postprocessRelease(
+          { datasource, packageName: 'foo:bar', registryUrl: 's3://bucket' },
+          releaseOrig,
+        );
+
+        expect(res).toBeNull();
+      });
+
+      it('returns null for NotFound response', async () => {
+        s3mock
+          .on(HeadObjectCommand, {
+            Bucket: 'bucket',
+            Key: 'foo/bar/1.2.3/bar-1.2.3.pom',
+          })
+          .rejectsOnce('NotFound');
+
+        const releaseOrig = { version: '1.2.3' };
+
+        const res = await postprocessRelease(
+          { datasource, packageName: 'foo:bar', registryUrl: 's3://bucket' },
+          releaseOrig,
+        );
+
+        expect(res).toBeNull();
+      });
+
+      it('returns null for NoSuchKey response', async () => {
+        s3mock
+          .on(HeadObjectCommand, {
+            Bucket: 'bucket',
+            Key: 'foo/bar/1.2.3/bar-1.2.3.pom',
+          })
+          .rejectsOnce('NoSuchKey');
+
+        const releaseOrig = { version: '1.2.3' };
+
+        const res = await postprocessRelease(
+          { datasource, packageName: 'foo:bar', registryUrl: 's3://bucket' },
+          releaseOrig,
+        );
+
+        expect(res).toBeNull();
+      });
+
+      it('returns null for unknown error', async () => {
+        s3mock
+          .on(HeadObjectCommand, {
+            Bucket: 'bucket',
+            Key: 'foo/bar/1.2.3/bar-1.2.3.pom',
+          })
+          .rejectsOnce('Unknown');
+
+        const releaseOrig = { version: '1.2.3' };
+
+        const res = await postprocessRelease(
+          { datasource, packageName: 'foo:bar', registryUrl: 's3://bucket' },
+          releaseOrig,
+        );
+
+        expect(res).toBeNull();
       });
     });
   });

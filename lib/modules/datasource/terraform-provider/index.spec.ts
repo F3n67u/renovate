@@ -1,13 +1,16 @@
 import { getPkgReleases } from '..';
+import { Fixtures } from '../../../../test/fixtures';
 import * as httpMock from '../../../../test/http-mock';
-import { loadFixture } from '../../../../test/util';
 import { TerraformProviderDatasource } from '.';
 
-const consulData: any = loadFixture('azurerm-provider.json');
-const hashicorpReleases: any = loadFixture('releaseBackendIndex.json');
-const serviceDiscoveryResult: any = loadFixture('service-discovery.json');
-const telmateProxmocVersions: any = loadFixture(
-  'telmate-proxmox-versions-response.json'
+const azurermData = Fixtures.get('azurerm-provider.json');
+const azurermVersionsData = Fixtures.get('azurerm-provider-versions.json');
+const hashicorpGoogleBetaReleases = Fixtures.get(
+  'releaseBackendIndexGoogleBeta.json',
+);
+const serviceDiscoveryResult = Fixtures.get('service-discovery.json');
+const telmateProxmoxVersions = Fixtures.get(
+  'telmate-proxmox-versions-response.json',
 );
 
 const terraformProviderDatasource = new TerraformProviderDatasource();
@@ -23,12 +26,15 @@ describe('modules/datasource/terraform-provider/index', () => {
         .reply(200, {})
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult);
-      httpMock.scope(secondaryUrl).get('/index.json').reply(200, {});
+      httpMock
+        .scope(secondaryUrl)
+        .get('/terraform-provider-azurerm/index.json')
+        .reply(200, {});
       expect(
         await getPkgReleases({
           datasource: TerraformProviderDatasource.id,
-          depName: 'azurerm',
-        })
+          packageName: 'azurerm',
+        }),
       ).toBeNull();
     });
 
@@ -39,12 +45,15 @@ describe('modules/datasource/terraform-provider/index', () => {
         .reply(404)
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult);
-      httpMock.scope(secondaryUrl).get('/index.json').reply(404);
+      httpMock
+        .scope(secondaryUrl)
+        .get('/terraform-provider-azurerm/index.json')
+        .reply(404);
       expect(
         await getPkgReleases({
           datasource: TerraformProviderDatasource.id,
-          depName: 'azurerm',
-        })
+          packageName: 'azurerm',
+        }),
       ).toBeNull();
     });
 
@@ -55,12 +64,15 @@ describe('modules/datasource/terraform-provider/index', () => {
         .replyWithError('')
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult);
-      httpMock.scope(secondaryUrl).get('/index.json').replyWithError('');
+      httpMock
+        .scope(secondaryUrl)
+        .get('/terraform-provider-azurerm/index.json')
+        .replyWithError('');
       expect(
         await getPkgReleases({
           datasource: TerraformProviderDatasource.id,
-          depName: 'azurerm',
-        })
+          packageName: 'azurerm',
+        }),
       ).toBeNull();
     });
 
@@ -68,32 +80,104 @@ describe('modules/datasource/terraform-provider/index', () => {
       httpMock
         .scope(primaryUrl)
         .get('/v1/providers/hashicorp/azurerm')
-        .reply(200, JSON.parse(consulData))
+        .reply(200, azurermData)
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult);
       const res = await getPkgReleases({
         datasource: TerraformProviderDatasource.id,
-        depName: 'azurerm',
+        packageName: 'azurerm',
       });
-      expect(res).toMatchSnapshot();
-      expect(res).not.toBeNull();
+      expect(res).toEqual({
+        homepage: 'https://registry.terraform.io/providers/hashicorp/azurerm',
+        registryUrl: 'https://registry.terraform.io',
+        releases: [
+          {
+            version: '2.52.0',
+          },
+          {
+            releaseTimestamp: '2019-11-26T08:22:56.000Z',
+            version: '2.53.0',
+          },
+        ],
+        sourceUrl:
+          'https://github.com/terraform-providers/terraform-provider-azurerm',
+      });
     });
 
-    it('processes real data from packageName', async () => {
+    it('returns null for empty result from third party', async () => {
       httpMock
         .scope('https://registry.company.com')
-        .get('/v1/providers/hashicorp/azurerm')
-        .reply(200, JSON.parse(consulData))
+        .get('/v1/providers/hashicorp/azurerm/versions')
+        .reply(200, {})
+        .get('/.well-known/terraform.json')
+        .reply(200, serviceDiscoveryResult);
+      expect(
+        await getPkgReleases({
+          datasource: TerraformProviderDatasource.id,
+          packageName: 'azurerm',
+          registryUrls: ['https://registry.company.com'],
+        }),
+      ).toBeNull();
+    });
+
+    it('returns null for 404 from third party', async () => {
+      httpMock
+        .scope('https://registry.company.com')
+        .get('/v1/providers/hashicorp/azurerm/versions')
+        .reply(404)
+        .get('/.well-known/terraform.json')
+        .reply(200, serviceDiscoveryResult);
+      expect(
+        await getPkgReleases({
+          datasource: TerraformProviderDatasource.id,
+          packageName: 'azurerm',
+          registryUrls: ['https://registry.company.com'],
+        }),
+      ).toBeNull();
+    });
+
+    it('returns null for unknown error from third party', async () => {
+      httpMock
+        .scope('https://registry.company.com')
+        .get('/v1/providers/hashicorp/azurerm/versions')
+        .replyWithError('')
+        .get('/.well-known/terraform.json')
+        .reply(200, serviceDiscoveryResult);
+      expect(
+        await getPkgReleases({
+          datasource: TerraformProviderDatasource.id,
+          packageName: 'azurerm',
+          registryUrls: ['https://registry.company.com'],
+        }),
+      ).toBeNull();
+    });
+
+    it('processes real data from third party', async () => {
+      httpMock
+        .scope('https://registry.company.com')
+        .get('/v1/providers/hashicorp/azurerm/versions')
+        .reply(200, azurermVersionsData)
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult);
       const res = await getPkgReleases({
         datasource: TerraformProviderDatasource.id,
-        depName: 'azure',
         packageName: 'hashicorp/azurerm',
         registryUrls: ['https://registry.company.com'],
       });
-      expect(res).toMatchSnapshot();
-      expect(res).not.toBeNull();
+      expect(res).toEqual({
+        registryUrl: 'https://registry.company.com',
+        releases: [
+          {
+            version: '2.49.0',
+          },
+          {
+            version: '3.0.0',
+          },
+          {
+            version: '3.0.1',
+          },
+        ],
+      });
     });
 
     it('processes data with alternative backend', async () => {
@@ -107,15 +191,29 @@ describe('modules/datasource/terraform-provider/index', () => {
         .reply(200, serviceDiscoveryResult);
       httpMock
         .scope(secondaryUrl)
-        .get('/index.json')
-        .reply(200, JSON.parse(hashicorpReleases));
+        .get('/terraform-provider-google-beta/index.json')
+        .reply(200, hashicorpGoogleBetaReleases);
 
       const res = await getPkgReleases({
         datasource: TerraformProviderDatasource.id,
-        depName: 'google-beta',
+        packageName: 'google-beta',
       });
-      expect(res).toMatchSnapshot();
-      expect(res).not.toBeNull();
+      expect(res).toEqual({
+        registryUrl: 'https://releases.hashicorp.com',
+        releases: [
+          {
+            version: '1.19.0',
+          },
+          {
+            version: '1.20.0',
+          },
+          {
+            version: '2.0.0',
+          },
+        ],
+        sourceUrl:
+          'https://github.com/terraform-providers/terraform-provider-google-beta',
+      });
     });
 
     it('simulate failing secondary release source', async () => {
@@ -127,23 +225,29 @@ describe('modules/datasource/terraform-provider/index', () => {
         })
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult);
-      httpMock.scope(secondaryUrl).get('/index.json').reply(404);
+      httpMock
+        .scope(secondaryUrl)
+        .get('/terraform-provider-datadog/index.json')
+        .reply(404);
 
       const res = await getPkgReleases({
         datasource: TerraformProviderDatasource.id,
-        depName: 'datadog',
+        packageName: 'datadog',
       });
       expect(res).toBeNull();
     });
 
     it('returns null for error in service discovery', async () => {
       httpMock.scope(primaryUrl).get('/.well-known/terraform.json').reply(404);
-      httpMock.scope(secondaryUrl).get('/index.json').replyWithError('');
+      httpMock
+        .scope(secondaryUrl)
+        .get('/terraform-provider-azurerm/index.json')
+        .replyWithError('');
       expect(
         await getPkgReleases({
           datasource: TerraformProviderDatasource.id,
-          depName: 'azurerm',
-        })
+          packageName: 'azurerm',
+        }),
       ).toBeNull();
     });
   });
@@ -160,7 +264,7 @@ describe('modules/datasource/terraform-provider/index', () => {
       const result = await terraformProviderDatasource.getBuilds(
         terraformProviderDatasource.defaultRegistryUrls[0],
         'hashicorp/azurerm',
-        '2.50.0'
+        '2.50.0',
       );
       expect(result).toBeNull();
     });
@@ -169,7 +273,7 @@ describe('modules/datasource/terraform-provider/index', () => {
       const result = await terraformProviderDatasource.getBuilds(
         terraformProviderDatasource.defaultRegistryUrls[1],
         'test/azurerm',
-        '2.50.0'
+        '2.50.0',
       );
       expect(result).toBeNull();
     });
@@ -178,13 +282,13 @@ describe('modules/datasource/terraform-provider/index', () => {
       httpMock
         .scope(primaryUrl)
         .get('/v1/providers/Telmate/proxmox/versions')
-        .reply(200, telmateProxmocVersions)
+        .reply(200, telmateProxmoxVersions)
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult);
       const result = await terraformProviderDatasource.getBuilds(
         terraformProviderDatasource.defaultRegistryUrls[0],
         'Telmate/proxmox',
-        '2.8.0'
+        '2.8.0',
       );
       expect(result).toBeNull();
     });
@@ -193,7 +297,7 @@ describe('modules/datasource/terraform-provider/index', () => {
       httpMock
         .scope(primaryUrl)
         .get('/v1/providers/Telmate/proxmox/versions')
-        .reply(200, telmateProxmocVersions)
+        .reply(200, telmateProxmoxVersions)
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult)
         .get('/v1/providers/Telmate/proxmox/2.6.1/download/darwin/arm64')
@@ -227,17 +331,53 @@ describe('modules/datasource/terraform-provider/index', () => {
       const res = await terraformProviderDatasource.getBuilds(
         terraformProviderDatasource.defaultRegistryUrls[0],
         'Telmate/proxmox',
-        '2.6.1'
+        '2.6.1',
       );
-      expect(res).toMatchSnapshot();
-      expect(res).not.toBeNull();
+      expect(res).toEqual([
+        {
+          arch: 'arm64',
+          download_url: 'https://downloads.example.com/proxmox',
+          filename: 'aFileName.zip',
+          name: 'Telmate/proxmox',
+          os: 'darwin',
+          url: 'https://downloads.example.com/proxmox',
+          version: '2.6.1',
+        },
+        {
+          arch: 'amd64',
+          download_url: 'https://downloads.example.com/proxmox',
+          filename: 'aFileName.zip',
+          name: 'Telmate/proxmox',
+          os: 'linux',
+          url: 'https://downloads.example.com/proxmox',
+          version: '2.6.1',
+        },
+        {
+          arch: 'arm',
+          download_url: 'https://downloads.example.com/proxmox',
+          filename: 'aFileName.zip',
+          name: 'Telmate/proxmox',
+          os: 'linux',
+          url: 'https://downloads.example.com/proxmox',
+          version: '2.6.1',
+        },
+        {
+          arch: 'amd64',
+          download_url: 'https://downloads.example.com/proxmox',
+          filename: 'aFileName.zip',
+          name: 'Telmate/proxmox',
+          os: 'windows',
+          url: 'https://downloads.example.com/proxmox',
+          version: '2.6.1',
+        },
+      ]);
     });
 
     it('return null if the retrieval of a single build fails', async () => {
       httpMock
         .scope(primaryUrl)
         .get('/v1/providers/Telmate/proxmox/versions')
-        .reply(200, telmateProxmocVersions)
+        .reply(200, telmateProxmoxVersions)
         .get('/.well-known/terraform.json')
         .reply(200, serviceDiscoveryResult)
         .get('/v1/providers/Telmate/proxmox/2.6.1/download/darwin/arm64')
@@ -266,9 +406,50 @@ describe('modules/datasource/terraform-provider/index', () => {
       const res = await terraformProviderDatasource.getBuilds(
         terraformProviderDatasource.defaultRegistryUrls[0],
         'Telmate/proxmox',
-        '2.6.1'
+        '2.6.1',
       );
       expect(res).toBeNull();
+    });
+  });
+
+  describe('getZipHashes', () => {
+    it('can fetch zip hashes', async () => {
+      httpMock
+        .scope(secondaryUrl)
+        .get(
+          '/terraform-provider-azurerm/2.56.0/terraform-provider-azurerm_2.56.0_SHA256SUMS',
+        )
+        .reply(
+          200,
+          '500d4e787bf046bbe64c4853530aff3dfddee2fdbff0087d7b1e7a8c24388628 terraform-provider-azurerm_2.56.0_darwin_amd64.zip\n' +
+            '766ff42596d643f9945b3aab2e83e306fe77c3020a5196366bbbb77eeea13b71 terraform-provider-azurerm_2.56.0_linux_amd64.zip\n' +
+            'fbdb892d9822ed0e4cb60f2fedbdbb556e4da0d88d3b942ae963ed6ff091e48f terraform-provider-azurerm_2.56.0_manifest.json',
+        );
+
+      const res = await terraformProviderDatasource.getZipHashes(
+        'https://releases.hashicorp.com/terraform-provider-azurerm/2.56.0/terraform-provider-azurerm_2.56.0_SHA256SUMS',
+      );
+
+      expect(res).toMatchObject([
+        '500d4e787bf046bbe64c4853530aff3dfddee2fdbff0087d7b1e7a8c24388628',
+        '766ff42596d643f9945b3aab2e83e306fe77c3020a5196366bbbb77eeea13b71',
+        'fbdb892d9822ed0e4cb60f2fedbdbb556e4da0d88d3b942ae963ed6ff091e48f',
+      ]);
+    });
+
+    it('does not hard fail when the ziphashes endpoint is not available', async () => {
+      httpMock
+        .scope(secondaryUrl)
+        .get(
+          '/terraform-provider-azurerm/2.56.0/terraform-provider-azurerm_2.56.0_SHA256SUMS',
+        )
+        .reply(404);
+
+      const res = await terraformProviderDatasource.getZipHashes(
+        'https://releases.hashicorp.com/terraform-provider-azurerm/2.56.0/terraform-provider-azurerm_2.56.0_SHA256SUMS',
+      );
+
+      expect(res).toBeUndefined();
     });
   });
 });

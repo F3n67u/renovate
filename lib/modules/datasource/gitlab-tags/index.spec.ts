@@ -29,10 +29,10 @@ describe('modules/datasource/gitlab-tags/index', () => {
       const res = await getPkgReleases({
         datasource,
         registryUrls: ['https://gitlab.company.com/api/v4/'],
-        depName: 'some/dep2',
+        packageName: 'some/dep2',
       });
       expect(res).toMatchSnapshot();
-      expect(res.releases).toHaveLength(3);
+      expect(res?.releases).toHaveLength(3);
     });
 
     it('returns tags from custom registry in sub path', async () => {
@@ -58,7 +58,7 @@ describe('modules/datasource/gitlab-tags/index', () => {
       const res = await getPkgReleases({
         datasource,
         registryUrls: ['https://my.company.com/gitlab'],
-        depName: 'some/dep2',
+        packageName: 'some/dep2',
       });
       expect(res).toMatchSnapshot();
       expect(res?.releases).toHaveLength(3);
@@ -72,10 +72,10 @@ describe('modules/datasource/gitlab-tags/index', () => {
         .reply(200, body);
       const res = await getPkgReleases({
         datasource,
-        depName: 'some/dep2',
+        packageName: 'some/dep2',
       });
       expect(res).toMatchSnapshot();
-      expect(res.releases).toHaveLength(2);
+      expect(res?.releases).toHaveLength(2);
     });
   });
 
@@ -94,7 +94,7 @@ describe('modules/datasource/gitlab-tags/index', () => {
       const res = await getDigest({
         datasource,
         registryUrls: ['https://gitlab.company.com/api/v4/'],
-        depName: 'some/dep2',
+        packageName: 'some/dep2',
       });
       expect(res).toBe(digest);
     });
@@ -112,23 +112,22 @@ describe('modules/datasource/gitlab-tags/index', () => {
         {
           datasource,
           registryUrls: ['https://gitlab.company.com/api/v4/'],
-          depName: 'some/dep2',
+          packageName: 'some/dep2',
         },
-        'branch'
+        'branch',
       );
       expect(res).toBe(digest);
     });
 
     it('returns null from gitlab installation with no commits', async () => {
-      const body = [];
       httpMock
         .scope('https://gitlab.company.com')
         .get('/api/v4/projects/some%2Fdep2/repository/commits?per_page=1')
-        .reply(200, body);
+        .reply(200, []);
       const res = await getDigest({
         datasource,
         registryUrls: ['https://gitlab.company.com/api/v4/'],
-        depName: 'some/dep2',
+        packageName: 'some/dep2',
       });
       expect(res).toBeNull();
     });
@@ -137,14 +136,14 @@ describe('modules/datasource/gitlab-tags/index', () => {
       httpMock
         .scope('https://gitlab.company.com')
         .get('/api/v4/projects/some%2Fdep2/repository/commits/unknown-branch')
-        .reply(404, null);
+        .reply(404, '}');
       const res = await getDigest(
         {
           datasource,
           registryUrls: ['https://gitlab.company.com/api/v4/'],
-          depName: 'some/dep2',
+          packageName: 'some/dep2',
         },
-        'unknown-branch'
+        'unknown-branch',
       );
       expect(res).toBeNull();
     });

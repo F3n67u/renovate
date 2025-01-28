@@ -1,39 +1,37 @@
-import stream from 'stream';
-import util from 'util';
+import stream from 'node:stream';
+import util from 'node:util';
 import is from '@sindresorhus/is';
 import findUp from 'find-up';
 import fs from 'fs-extra';
 import upath from 'upath';
 import { GlobalConfig } from '../../config/global';
 import { logger } from '../../logger';
-
-export * from './proxies';
+import { ensureCachePath, ensureLocalPath, isValidPath } from './util';
 
 export const pipeline = util.promisify(stream.pipeline);
 
-export function getSubDirectory(fileName: string): string {
+export function getParentDir(fileName: string): string {
   return upath.parse(fileName).dir;
 }
 
 export function getSiblingFileName(
-  existingFileNameWithPath: string,
-  otherFileName: string
+  fileName: string,
+  siblingName: string,
 ): string {
-  const subDirectory = getSubDirectory(existingFileNameWithPath);
-  return upath.join(subDirectory, otherFileName);
+  const subDirectory = getParentDir(fileName);
+  return upath.join(subDirectory, siblingName);
 }
 
-export async function readLocalFile(fileName: string): Promise<Buffer>;
+export async function readLocalFile(fileName: string): Promise<Buffer | null>;
 export async function readLocalFile(
   fileName: string,
-  encoding: 'utf8'
-): Promise<string>;
+  encoding: 'utf8',
+): Promise<string | null>;
 export async function readLocalFile(
   fileName: string,
-  encoding?: string
+  encoding?: BufferEncoding,
 ): Promise<string | Buffer | null> {
-  const { localDir } = GlobalConfig.get();
-  const localFileName = upath.join(localDir, fileName);
+  const localFileName = ensureLocalPath(fileName);
   try {
     const fileContent = encoding
       ? await fs.readFile(localFileName, encoding)
@@ -45,51 +43,62 @@ export async function readLocalFile(
   }
 }
 
+export async function readLocalSymlink(
+  fileName: string,
+): Promise<string | null> {
+  const localFileName = ensureLocalPath(fileName);
+  try {
+    const linkContent = await fs.readlink(localFileName);
+    return linkContent;
+  } catch (err) {
+    logger.trace({ err }, 'Error reading local symlink');
+    return null;
+  }
+}
+
 export async function writeLocalFile(
   fileName: string,
-  fileContent: string | Buffer
+  fileContent: string | Buffer,
 ): Promise<void> {
-  const { localDir } = GlobalConfig.get();
-  const localFileName = upath.join(localDir, fileName);
+  const localFileName = ensureLocalPath(fileName);
   await fs.outputFile(localFileName, fileContent);
 }
 
 export async function deleteLocalFile(fileName: string): Promise<void> {
-  const { localDir } = GlobalConfig.get();
+  // This a failsafe and hopefully will never be triggered
+  if (GlobalConfig.get('platform') === 'local') {
+    throw new Error('Cannot delete file when platform=local');
+  }
+  const localDir = GlobalConfig.get('localDir');
   if (localDir) {
-    const localFileName = upath.join(localDir, fileName);
+    const localFileName = ensureLocalPath(fileName);
     await fs.remove(localFileName);
   }
 }
 
-// istanbul ignore next
 export async function renameLocalFile(
   fromFile: string,
-  toFile: string
+  toFile: string,
 ): Promise<void> {
-  const { localDir } = GlobalConfig.get();
-  await fs.move(upath.join(localDir, fromFile), upath.join(localDir, toFile));
+  const fromPath = ensureLocalPath(fromFile);
+  const toPath = ensureLocalPath(toFile);
+  await fs.move(fromPath, toPath);
 }
 
-// istanbul ignore next
 export async function ensureDir(dirName: string): Promise<void> {
   if (is.nonEmptyString(dirName)) {
     await fs.ensureDir(dirName);
   }
 }
 
-// istanbul ignore next
-export async function ensureLocalDir(dirName: string): Promise<void> {
-  const { localDir } = GlobalConfig.get();
-  const localDirName = upath.join(localDir, dirName);
-  await fs.ensureDir(localDirName);
+export async function ensureLocalDir(dirName: string): Promise<string> {
+  const fullPath = ensureLocalPath(dirName);
+  await fs.ensureDir(fullPath);
+  return fullPath;
 }
 
 export async function ensureCacheDir(name: string): Promise<string> {
-  const cacheDirName = upath.join(
-    GlobalConfig.get('cacheDir'),
-    `others/${name}`
-  );
+  const cacheDirName = ensureCachePath(`others/${name}`);
   await fs.ensureDir(cacheDirName);
   return cacheDirName;
 }
@@ -100,17 +109,28 @@ export async function ensureCacheDir(name: string): Promise<string> {
  * without risk of that information leaking to other repositories/users.
  */
 export function privateCacheDir(): string {
-  const { cacheDir } = GlobalConfig.get();
+  const cacheDir = GlobalConfig.get('cacheDir');
   return upath.join(cacheDir, '__renovate-private-cache');
 }
 
-export function localPathExists(pathName: string): Promise<boolean> {
-  const { localDir } = GlobalConfig.get();
+export async function localPathExists(pathName: string): Promise<boolean> {
   // Works for both files as well as directories
-  return fs
-    .stat(upath.join(localDir, pathName))
-    .then((s) => !!s)
-    .catch(() => false);
+  const path = ensureLocalPath(pathName);
+  try {
+    const s = await fs.stat(path);
+    return !!s;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validate local path without throwing.
+ * @param path Path to check
+ * @returns `true` if given `path` is a valid local path, otherwise `false`.
+ */
+export function isValidLocalPath(path: string): boolean {
+  return isValidPath(path, 'localDir');
 }
 
 /**
@@ -121,7 +141,7 @@ export function localPathExists(pathName: string): Promise<boolean> {
  */
 export async function findLocalSiblingOrParent(
   existingFileNameWithPath: string,
-  otherFileName: string
+  otherFileName: string,
 ): Promise<string | null> {
   if (upath.isAbsolute(existingFileNameWithPath)) {
     return null;
@@ -132,7 +152,7 @@ export async function findLocalSiblingOrParent(
 
   let current = existingFileNameWithPath;
   while (current !== '') {
-    current = getSubDirectory(current);
+    current = getParentDir(current);
     const candidate = upath.join(current, otherFileName);
     if (await localPathExists(candidate)) {
       return candidate;
@@ -146,22 +166,41 @@ export async function findLocalSiblingOrParent(
  * Get files by name from directory
  */
 export async function readLocalDirectory(path: string): Promise<string[]> {
-  const { localDir } = GlobalConfig.get();
-  const localPath = upath.join(localDir, path);
+  const localPath = ensureLocalPath(path);
   const fileList = await fs.readdir(localPath);
   return fileList;
 }
 
-export function createWriteStream(path: string): fs.WriteStream {
-  return fs.createWriteStream(path);
+export function createCacheWriteStream(path: string): fs.WriteStream {
+  const fullPath = ensureCachePath(path);
+  return fs.createWriteStream(fullPath);
 }
 
-export function localPathIsFile(pathName: string): Promise<boolean> {
-  const { localDir } = GlobalConfig.get();
-  return fs
-    .stat(upath.join(localDir, pathName))
-    .then((s) => s.isFile())
-    .catch(() => false);
+export function createCacheReadStream(path: string): fs.ReadStream {
+  const fullPath = ensureCachePath(path);
+  return fs.createReadStream(fullPath);
+}
+
+export async function localPathIsFile(pathName: string): Promise<boolean> {
+  const path = ensureLocalPath(pathName);
+  try {
+    const s = await fs.stat(path);
+    return s.isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function localPathIsSymbolicLink(
+  pathName: string,
+): Promise<boolean> {
+  const path = ensureLocalPath(pathName);
+  try {
+    const s = await fs.lstat(path);
+    return s.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -170,9 +209,9 @@ export function localPathIsFile(pathName: string): Promise<boolean> {
 
 export async function findUpLocal(
   fileName: string | string[],
-  cwd: string
+  cwd: string,
 ): Promise<string | null> {
-  const { localDir } = GlobalConfig.get();
+  const localDir = GlobalConfig.get('localDir');
   const absoluteCwd = upath.join(localDir, cwd);
   const normalizedAbsoluteCwd = upath.normalizeSafe(absoluteCwd);
   const res = await findUp(fileName, {
@@ -194,4 +233,122 @@ export async function findUpLocal(
   }
   // Return null if found file is outside of localDir
   return null;
+}
+
+export function chmodLocalFile(
+  fileName: string,
+  mode: string | number,
+): Promise<void> {
+  const fullFileName = ensureLocalPath(fileName);
+  return fs.chmod(fullFileName, mode);
+}
+
+export async function statLocalFile(
+  fileName: string,
+): Promise<fs.Stats | null> {
+  const fullFileName = ensureLocalPath(fileName);
+  try {
+    return await fs.stat(fullFileName);
+  } catch {
+    return null;
+  }
+}
+
+export async function statCacheFile(
+  pathName: string,
+): Promise<fs.Stats | null> {
+  const path = ensureCachePath(pathName);
+  try {
+    return await fs.stat(path);
+  } catch {
+    return null;
+  }
+}
+
+export function listCacheDir(
+  path: string,
+  options: { recursive: boolean } = { recursive: false },
+): Promise<string[]> {
+  const fullPath = ensureCachePath(path);
+  return fs.readdir(fullPath, {
+    encoding: 'utf-8',
+    recursive: options.recursive,
+  });
+}
+
+export async function rmCache(path: string): Promise<void> {
+  const fullPath = ensureCachePath(path);
+  await fs.rm(fullPath, { recursive: true });
+}
+
+export async function cachePathExists(pathName: string): Promise<boolean> {
+  const path = ensureCachePath(pathName);
+  try {
+    const s = await fs.stat(path);
+    return !!s;
+  } catch {
+    return false;
+  }
+}
+
+export async function cachePathIsFile(pathName: string): Promise<boolean> {
+  const path = ensureCachePath(pathName);
+  try {
+    const s = await fs.stat(path);
+    return s.isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function readCacheFile(fileName: string): Promise<Buffer>;
+export async function readCacheFile(
+  fileName: string,
+  encoding: 'utf8',
+): Promise<string>;
+export function readCacheFile(
+  fileName: string,
+  encoding?: BufferEncoding,
+): Promise<string | Buffer> {
+  const fullPath = ensureCachePath(fileName);
+  return encoding ? fs.readFile(fullPath, encoding) : fs.readFile(fullPath);
+}
+
+export function outputCacheFile(
+  file: string,
+  data: string | NodeJS.ArrayBufferView,
+): Promise<void> {
+  const filePath = ensureCachePath(file);
+  return fs.outputFile(filePath, data);
+}
+
+export async function readSystemFile(fileName: string): Promise<Buffer>;
+export async function readSystemFile(
+  fileName: string,
+  encoding: 'utf8',
+): Promise<string>;
+export function readSystemFile(
+  fileName: string,
+  encoding?: BufferEncoding,
+): Promise<string | Buffer> {
+  return encoding ? fs.readFile(fileName, encoding) : fs.readFile(fileName);
+}
+
+export async function writeSystemFile(
+  fileName: string,
+  data: string | Buffer,
+): Promise<void> {
+  await fs.outputFile(fileName, data);
+}
+
+export async function getLocalFiles(
+  fileNames: string[],
+): Promise<Record<string, string | null>> {
+  const fileContentMap: Record<string, string | null> = {};
+
+  for (const fileName of fileNames) {
+    fileContentMap[fileName] = await readLocalFile(fileName, 'utf8');
+  }
+
+  return fileContentMap;
 }

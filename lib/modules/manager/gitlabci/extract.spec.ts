@@ -1,3 +1,4 @@
+import { codeBlock } from 'common-tags';
 import { logger } from '../../../../test/util';
 import { GlobalConfig } from '../../../config/global';
 import type { RepoGlobalConfig } from '../../../config/types';
@@ -24,7 +25,7 @@ describe('modules/manager/gitlabci/extract', () => {
 
   describe('extractAllPackageFile()', () => {
     it('extracts from empty file', () => {
-      expect(extractPackageFile('')).toBeNull();
+      expect(extractPackageFile('', '', {})).toBeNull();
     });
   });
 
@@ -33,8 +34,18 @@ describe('modules/manager/gitlabci/extract', () => {
       expect(
         await extractAllPackageFiles(config, [
           'lib/modules/manager/gitlabci/__fixtures__/gitlab-ci.2.yaml',
-        ])
+        ]),
       ).toBeNull();
+    });
+
+    it('extracts from multidoc yaml', async () => {
+      const res = await extractAllPackageFiles(config, [
+        'lib/modules/manager/gitlabci/__fixtures__/gitlab-ci.multi-doc.yaml',
+      ]);
+      expect(res).toHaveLength(3);
+
+      const deps = res?.map((entry) => entry.deps).flat();
+      expect(deps).toHaveLength(8);
     });
 
     it('extracts multiple included image lines', async () => {
@@ -44,12 +55,7 @@ describe('modules/manager/gitlabci/extract', () => {
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(3);
 
-      const deps: PackageDependency[] = [];
-      res.forEach((e) => {
-        e.deps.forEach((d) => {
-          deps.push(d);
-        });
-      });
+      const deps = res?.map((entry) => entry.deps).flat();
       expect(deps).toHaveLength(5);
     });
 
@@ -59,7 +65,7 @@ describe('modules/manager/gitlabci/extract', () => {
       ]);
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(1);
-      expect(res[0].deps).toHaveLength(3);
+      expect(res?.[0].deps).toHaveLength(3);
     });
 
     it('extracts multiple named services', async () => {
@@ -68,7 +74,7 @@ describe('modules/manager/gitlabci/extract', () => {
       ]);
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(1);
-      expect(res[0].deps).toHaveLength(10);
+      expect(res?.[0].deps).toHaveLength(10);
     });
 
     it('extracts multiple image lines', async () => {
@@ -79,14 +85,15 @@ describe('modules/manager/gitlabci/extract', () => {
       expect(res).toHaveLength(1);
 
       const deps: PackageDependency[] = [];
-      res.forEach((e) => {
+      res?.forEach((e) => {
         e.deps.forEach((d) => {
           deps.push(d);
         });
       });
       expect(deps).toHaveLength(8);
 
-      expect(deps.some((dep) => dep.currentValue.includes("'"))).toBeFalse();
+      // TODO #22198
+      expect(deps.some((dep) => dep.currentValue!.includes("'"))).toBeFalse();
     });
 
     it('extracts multiple image lines with comments', async () => {
@@ -97,7 +104,7 @@ describe('modules/manager/gitlabci/extract', () => {
       expect(res).toHaveLength(1);
 
       const deps: PackageDependency[] = [];
-      res.forEach((e) => {
+      res?.forEach((e) => {
         e.deps.forEach((d) => {
           deps.push(d);
         });
@@ -110,7 +117,7 @@ describe('modules/manager/gitlabci/extract', () => {
         'lib/modules/manager/gitlabci/__fixtures__/gitlab-ci.4.yaml',
       ]);
       expect(res).toBeNull();
-      expect(logger.logger.warn).toHaveBeenCalled();
+      expect(logger.logger.debug).toHaveBeenCalled();
     });
 
     it('skips images with variables', async () => {
@@ -168,7 +175,8 @@ describe('modules/manager/gitlabci/extract', () => {
     });
 
     it('extract images from dependency proxy', () => {
-      const res = extractPackageFile(`
+      const res = extractPackageFile(
+        `
         image:
           name: $\{CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/renovate/renovate:31.65.1-slim
 
@@ -176,8 +184,11 @@ describe('modules/manager/gitlabci/extract', () => {
           - $CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX/mariadb:10.4.11
           - name: $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/other/image1:1.0.0
             alias: imagealias1
-      `);
-      expect(res.deps).toEqual([
+      `,
+        '',
+        {},
+      );
+      expect(res?.deps).toEqual([
         {
           autoReplaceStringTemplate:
             '${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/' +
@@ -217,6 +228,72 @@ describe('modules/manager/gitlabci/extract', () => {
       ]);
     });
 
+    it('extract images via registry aliases', () => {
+      const registryAliases = {
+        $CI_REGISTRY: 'registry.com',
+        $BUILD_IMAGES: 'registry.com/build-images',
+        foo: 'foo.registry.com',
+      };
+      const res = extractPackageFile(
+        `
+        image:
+          name: $CI_REGISTRY/renovate/renovate:31.65.1-slim
+
+        services:
+          - foo/mariadb:10.4.11
+          - name: $CI_REGISTRY/other/image1:1.0.0
+            alias: imagealias1
+          - $BUILD_IMAGES/image2:1.0.0
+      `,
+        '',
+        {
+          registryAliases,
+        },
+      );
+      expect(res?.deps).toEqual([
+        {
+          autoReplaceStringTemplate:
+            '$CI_REGISTRY/renovate/renovate:{{#if newValue}}{{newValue}}{{/if}}{{#if newDigest}}@{{newDigest}}{{/if}}',
+          currentDigest: undefined,
+          currentValue: '31.65.1-slim',
+          datasource: 'docker',
+          depName: 'registry.com/renovate/renovate',
+          depType: 'image-name',
+          replaceString: '$CI_REGISTRY/renovate/renovate:31.65.1-slim',
+        },
+        {
+          autoReplaceStringTemplate:
+            'foo/mariadb:{{#if newValue}}{{newValue}}{{/if}}{{#if newDigest}}@{{newDigest}}{{/if}}',
+          currentDigest: undefined,
+          currentValue: '10.4.11',
+          datasource: 'docker',
+          depName: 'foo.registry.com/mariadb',
+          depType: 'service-image',
+          replaceString: 'foo/mariadb:10.4.11',
+        },
+        {
+          autoReplaceStringTemplate:
+            '$CI_REGISTRY/other/image1:{{#if newValue}}{{newValue}}{{/if}}{{#if newDigest}}@{{newDigest}}{{/if}}',
+          currentDigest: undefined,
+          currentValue: '1.0.0',
+          datasource: 'docker',
+          depName: 'registry.com/other/image1',
+          depType: 'service-image',
+          replaceString: '$CI_REGISTRY/other/image1:1.0.0',
+        },
+        {
+          autoReplaceStringTemplate:
+            '$BUILD_IMAGES/image2:{{#if newValue}}{{newValue}}{{/if}}{{#if newDigest}}@{{newDigest}}{{/if}}',
+          currentDigest: undefined,
+          currentValue: '1.0.0',
+          datasource: 'docker',
+          depName: 'registry.com/build-images/image2',
+          depType: 'service-image',
+          replaceString: '$BUILD_IMAGES/image2:1.0.0',
+        },
+      ]);
+    });
+
     it('extracts from image', () => {
       let expectedRes = {
         autoReplaceStringTemplate:
@@ -235,7 +312,7 @@ describe('modules/manager/gitlabci/extract', () => {
       expect(
         extractFromImage({
           name: 'image:test',
-        })
+        }),
       ).toEqual(expectedRes);
 
       expect(extractFromImage(undefined)).toBeNull();
@@ -268,7 +345,7 @@ describe('modules/manager/gitlabci/extract', () => {
       expect(extractFromServices(undefined)).toBeEmptyArray();
       expect(extractFromServices(services)).toEqual(expectedRes);
       expect(
-        extractFromServices([{ name: 'image:test' }, { name: 'image2:test2' }])
+        extractFromServices([{ name: 'image:test' }, { name: 'image2:test2' }]),
       ).toEqual(expectedRes);
     });
 
@@ -287,6 +364,136 @@ describe('modules/manager/gitlabci/extract', () => {
       ];
       expect(extractFromJob(undefined)).toBeEmptyArray();
       expect(extractFromJob({ image: 'image:test' })).toEqual(expectedRes);
+    });
+
+    it('extracts component references via registry aliases', () => {
+      const registryAliases = {
+        $CI_SERVER_HOST: 'gitlab.example.com',
+        $COMPONENT_REGISTRY: 'gitlab.example.com/a-group',
+      };
+      const content = codeBlock`
+        include:
+          - component: $CI_SERVER_HOST/an-org/a-project/a-component@1.0
+            inputs:
+              stage: build
+          - component: $CI_SERVER_HOST/an-org/a-subgroup/a-project/a-component@e3262fdd0914fa823210cdb79a8c421e2cef79d8
+          - component: $CI_SERVER_HOST/an-org/a-subgroup/another-project/a-component@main
+          - component: $CI_SERVER_HOST/another-org/a-project/a-component@~latest
+            inputs:
+              stage: test
+          - component: $CI_SERVER_HOST/malformed-component-reference
+          - component:
+              malformed: true
+          - component: $CI_SERVER_HOST/an-org/a-component@1.0
+          - component: other-gitlab.example.com/an-org/a-project/a-component@1.0
+          - component: $COMPONENT_REGISTRY/a-project/a-component@1.0
+      `;
+      const res = extractPackageFile(content, '', {
+        registryAliases,
+      });
+      expect(res?.deps).toMatchObject([
+        {
+          currentValue: '1.0',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+        },
+        {
+          currentValue: 'e3262fdd0914fa823210cdb79a8c421e2cef79d8',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-subgroup/a-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+        },
+        {
+          currentValue: 'main',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-subgroup/another-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+        },
+        {
+          currentValue: '~latest',
+          datasource: 'gitlab-tags',
+          depName: 'another-org/a-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+          skipReason: 'unsupported-version',
+        },
+        {
+          currentValue: '1.0',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-project',
+          depType: 'repository',
+          registryUrls: ['https://other-gitlab.example.com'],
+        },
+        {
+          currentValue: '1.0',
+          datasource: 'gitlab-tags',
+          depName: 'a-group/a-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+        },
+      ]);
+    });
+
+    it('extracts component references', () => {
+      const content = codeBlock`
+        include:
+          - component: gitlab.example.com/an-org/a-project/a-component@1.0
+            inputs:
+              stage: build
+          - component: gitlab.example.com/an-org/a-subgroup/a-project/a-component@e3262fdd0914fa823210cdb79a8c421e2cef79d8
+          - component: gitlab.example.com/an-org/a-subgroup/another-project/a-component@main
+          - component: gitlab.example.com/another-org/a-project/a-component@~latest
+            inputs:
+              stage: test
+          - component: gitlab.example.com/malformed-component-reference
+          - component:
+              malformed: true
+          - component: gitlab.example.com/an-org/a-component@1.0
+          - component: other-gitlab.example.com/an-org/a-project/a-component@1.0
+      `;
+      const res = extractPackageFile(content, '', {});
+      expect(res?.deps).toMatchObject([
+        {
+          currentValue: '1.0',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+        },
+        {
+          currentValue: 'e3262fdd0914fa823210cdb79a8c421e2cef79d8',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-subgroup/a-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+        },
+        {
+          currentValue: 'main',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-subgroup/another-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+        },
+        {
+          currentValue: '~latest',
+          datasource: 'gitlab-tags',
+          depName: 'another-org/a-project',
+          depType: 'repository',
+          registryUrls: ['https://gitlab.example.com'],
+          skipReason: 'unsupported-version',
+        },
+        {
+          currentValue: '1.0',
+          datasource: 'gitlab-tags',
+          depName: 'an-org/a-project',
+          depType: 'repository',
+          registryUrls: ['https://other-gitlab.example.com'],
+        },
+      ]);
     });
   });
 });

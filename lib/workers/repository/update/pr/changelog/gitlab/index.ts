@@ -1,70 +1,37 @@
 import changelogFilenameRegex from 'changelog-filename-regex';
 import { logger } from '../../../../../../logger';
 import type { GitlabRelease } from '../../../../../../modules/datasource/gitlab-releases/types';
-import type { GitlabTag } from '../../../../../../modules/datasource/gitlab-tags/types';
 import type { GitlabTreeNode } from '../../../../../../types/platform/gitlab';
 import { GitlabHttp } from '../../../../../../util/http/gitlab';
-import { ensureTrailingSlash } from '../../../../../../util/url';
-import type { ChangeLogFile, ChangeLogNotes } from '../types';
+import { compareChangelogFilePath } from '../common';
+import type {
+  ChangeLogFile,
+  ChangeLogNotes,
+  ChangeLogProject,
+  ChangeLogRelease,
+} from '../types';
 
 export const id = 'gitlab-changelog';
 const http = new GitlabHttp(id);
 
-export async function getTags(
-  endpoint: string,
-  repository: string
-): Promise<string[]> {
-  logger.trace('gitlab.getTags()');
-  const urlEncodedRepo = encodeURIComponent(repository);
-  const url = `${ensureTrailingSlash(
-    endpoint
-  )}projects/${urlEncodedRepo}/repository/tags?per_page=100`;
-  try {
-    const res = await http.getJson<GitlabTag[]>(url, {
-      paginate: true,
-    });
-
-    const tags = res.body;
-
-    if (!tags.length) {
-      logger.debug({ sourceRepo: repository }, 'repository has no Gitlab tags');
-    }
-
-    return tags.map((tag) => tag.name).filter(Boolean);
-  } catch (err) {
-    logger.debug(
-      { sourceRepo: repository, err },
-      'Failed to fetch Gitlab tags'
-    );
-    // istanbul ignore if
-    if (err.message?.includes('Bad credentials')) {
-      logger.warn('Bad credentials triggering tag fail lookup in changelog');
-      throw err;
-    }
-    return [];
-  }
-}
-
 export async function getReleaseNotesMd(
   repository: string,
   apiBaseUrl: string,
-  sourceDirectory?: string
+  sourceDirectory?: string,
 ): Promise<ChangeLogFile | null> {
   logger.trace('gitlab.getReleaseNotesMd()');
   const urlEncodedRepo = encodeURIComponent(repository);
-  const apiPrefix = `${ensureTrailingSlash(
-    apiBaseUrl
-  )}projects/${urlEncodedRepo}/repository/`;
+  const apiPrefix = `${apiBaseUrl}projects/${urlEncodedRepo}/repository/`;
 
   // https://docs.gitlab.com/13.2/ee/api/repositories.html#list-repository-tree
   const tree = (
-    await http.getJson<GitlabTreeNode[]>(
+    await http.getJsonUnchecked<GitlabTreeNode[]>(
       `${apiPrefix}tree?per_page=100${
         sourceDirectory ? `&path=${sourceDirectory}` : ''
       }`,
       {
         paginate: true,
-      }
+      },
     )
   ).body;
   const allFiles = tree.filter((f) => f.type === 'blob');
@@ -76,11 +43,13 @@ export async function getReleaseNotesMd(
     logger.trace('no changelog file found');
     return null;
   }
-  const { path: changelogFile, id } = files.shift()!;
+  const { path: changelogFile, id } = files
+    .sort((a, b) => compareChangelogFilePath(a.name, b.name))
+    .shift()!;
   /* istanbul ignore if */
   if (files.length !== 0) {
     logger.debug(
-      `Multiple candidates for changelog file, using ${changelogFile}`
+      `Multiple candidates for changelog file, using ${changelogFile}`,
     );
   }
 
@@ -91,21 +60,23 @@ export async function getReleaseNotesMd(
 }
 
 export async function getReleaseList(
-  apiBaseUrl: string,
-  repository: string
+  project: ChangeLogProject,
+  _release: ChangeLogRelease,
 ): Promise<ChangeLogNotes[]> {
   logger.trace('gitlab.getReleaseNotesMd()');
-
+  const apiBaseUrl = project.apiBaseUrl;
+  const repository = project.repository;
   const urlEncodedRepo = encodeURIComponent(repository);
-  const apiUrl = `${ensureTrailingSlash(
-    apiBaseUrl
-  )}projects/${urlEncodedRepo}/releases`;
+  const apiUrl = `${apiBaseUrl}projects/${urlEncodedRepo}/releases`;
 
-  const res = await http.getJson<GitlabRelease[]>(`${apiUrl}?per_page=100`, {
-    paginate: true,
-  });
+  const res = await http.getJsonUnchecked<GitlabRelease[]>(
+    `${apiUrl}?per_page=100`,
+    {
+      paginate: true,
+    },
+  );
   return res.body.map((release) => ({
-    url: `${apiUrl}/${release.tag_name}`,
+    url: `${project.baseUrl}${repository}/-/releases/${release.tag_name}`,
     notesSourceUrl: apiUrl,
     name: release.name,
     body: release.description,
