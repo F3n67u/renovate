@@ -1,20 +1,19 @@
 import is from '@sindresorhus/is';
 import { regEx } from '../../../util/regex';
 
-// eslint-disable-next-line typescript-enum/no-enum
-export enum TokenType {
-  Number = 1,
-  String,
-}
+export const TokenType = {
+  Number: 1,
+  String: 2,
+};
 
 type Token = {
-  type: TokenType;
+  type: number;
   val: string | number;
 };
 
 function iterateChars(
   str: string,
-  cb: (p: string | null, n: string | null) => void
+  cb: (p: string | null, n: string | null) => void,
 ): void {
   let prev = null;
   let next = null;
@@ -50,9 +49,6 @@ export function tokenize(versionStr: string): Token[] | null {
   let currentVal = '';
 
   function yieldToken(): void {
-    if (currentVal === '') {
-      result = null;
-    }
     if (result) {
       const val = currentVal;
       if (regEx(/^\d+$/).test(val)) {
@@ -73,8 +69,12 @@ export function tokenize(versionStr: string): Token[] | null {
     if (nextChar === null) {
       yieldToken();
     } else if (isSeparator(nextChar)) {
-      yieldToken();
-      currentVal = '';
+      if (prevChar && !isSeparator(prevChar)) {
+        yieldToken();
+        currentVal = '';
+      } else {
+        result = null;
+      }
     } else if (prevChar !== null && isTransition(prevChar, nextChar)) {
       yieldToken();
       currentVal = nextChar;
@@ -86,17 +86,16 @@ export function tokenize(versionStr: string): Token[] | null {
   return result;
 }
 
-// eslint-disable-next-line typescript-enum/no-enum
-export enum QualifierRank {
-  Dev = -1,
-  Default = 0,
-  RC,
-  Snapshot,
-  Final,
-  GA,
-  Release,
-  SP,
-}
+export const QualifierRank = {
+  Dev: -1,
+  Default: 0,
+  RC: 1,
+  Snapshot: 2,
+  Final: 3,
+  GA: 4,
+  Release: 5,
+  SP: 6,
+} as const;
 
 export function qualifierRank(input: string): number {
   const val = input.toLowerCase();
@@ -223,11 +222,7 @@ interface PrefixRange {
   tokens: Token[];
 }
 
-// eslint-disable-next-line typescript-enum/no-enum
-export enum RangeBound {
-  Inclusive = 1,
-  Exclusive,
-}
+export type RangeBound = 'inclusive' | 'exclusive';
 
 interface MavenBasedRange {
   leftBound: RangeBound;
@@ -248,18 +243,20 @@ export function parsePrefixRange(input: string): PrefixRange | null {
     return { tokens: [] };
   }
 
-  const postfixRegex = regEx(/[-._]\+$/);
+  const postfixRegex = regEx(/[^-._+][-._]\+$/);
   if (postfixRegex.test(input)) {
     const prefixValue = input.replace(regEx(/[-._]\+$/), '');
     const tokens = tokenize(prefixValue);
-    return tokens ? { tokens } : null;
+    if (tokens) {
+      return { tokens };
+    }
   }
 
   return null;
 }
 
 const mavenBasedRangeRegex = regEx(
-  /^(?<leftBoundStr>[[\](]\s*)(?<leftVal>[-._+a-zA-Z0-9]*?)(?<separator>\s*,\s*)(?<rightVal>[-._+a-zA-Z0-9]*?)(?<rightBoundStr>\s*[[\])])$/
+  /^(?<leftBoundStr>[[\](]\s*)(?<leftVal>[-._+a-zA-Z0-9]*?)(?<separator>\s*,\s*)(?<rightVal>[-._+a-zA-Z0-9]*?)(?<rightBoundStr>\s*[[\])])$/,
 );
 
 export function parseMavenBasedRange(input: string): MavenBasedRange | null {
@@ -293,14 +290,9 @@ export function parseMavenBasedRange(input: string): MavenBasedRange | null {
       ) {
         return null;
       }
-      const leftBound =
-        leftBoundStr.trim() === '['
-          ? RangeBound.Inclusive
-          : RangeBound.Exclusive;
+      const leftBound = leftBoundStr.trim() === '[' ? 'inclusive' : 'exclusive';
       const rightBound =
-        rightBoundStr.trim() === ']'
-          ? RangeBound.Inclusive
-          : RangeBound.Exclusive;
+        rightBoundStr.trim() === ']' ? 'inclusive' : 'exclusive';
       return {
         leftBound,
         leftBoundStr,
@@ -316,12 +308,37 @@ export function parseMavenBasedRange(input: string): MavenBasedRange | null {
   return null;
 }
 
+interface SingleVersionRange {
+  val: string;
+}
+
+const singleVersionRangeRegex = regEx(/^\[\s*(?<val>[-._+a-zA-Z0-9]*?)\s*\]$/);
+
+export function parseSingleVersionRange(
+  input: string,
+): SingleVersionRange | null {
+  const matchGroups = singleVersionRangeRegex.exec(input)?.groups;
+  if (!matchGroups) {
+    return null;
+  }
+
+  const { val } = matchGroups;
+  if (!isVersion(val)) {
+    return null;
+  }
+
+  return { val };
+}
+
 export function isValid(str: string): boolean {
   if (!str) {
     return false;
   }
 
   return (
-    isVersion(str) || !!parsePrefixRange(str) || !!parseMavenBasedRange(str)
+    isVersion(str) ||
+    !!parsePrefixRange(str) ||
+    !!parseMavenBasedRange(str) ||
+    !!parseSingleVersionRange(str)
   );
 }

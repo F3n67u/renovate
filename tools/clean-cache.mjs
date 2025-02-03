@@ -1,12 +1,10 @@
-import { tmpdir } from 'os';
+import { tmpdir } from 'node:os';
 import { remove } from 'fs-extra';
-import { join } from 'upath';
+import upath from 'upath';
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises
-(async () => {
+await (async () => {
   const tmpDir = process.env.RENOVATE_TMPDIR ?? tmpdir();
-  const renovateDir = join(tmpDir, 'renovate');
-  // eslint-disable-next-line no-console
+  const renovateDir = upath.join(tmpDir, 'renovate');
   console.log('Removing ' + renovateDir);
   await remove(renovateDir);
 })();

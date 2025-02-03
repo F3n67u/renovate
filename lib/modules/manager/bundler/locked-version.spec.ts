@@ -1,11 +1,12 @@
-import { loadFixture } from '../../../../test/util';
+import { Fixtures } from '../../../../test/fixtures';
+import { logger } from '../../../../test/util';
 import { extractLockFileEntries } from './locked-version';
 
-const railsGemfileLock = loadFixture('Gemfile.rails.lock');
-const webPackerGemfileLock = loadFixture('Gemfile.webpacker.lock');
-const mastodonGemfileLock = loadFixture('Gemfile.mastodon.lock');
-const rubyCIGemfileLock = loadFixture('Gemfile.rubyci.lock');
-const gitlabFossGemfileLock = loadFixture('Gemfile.gitlab-foss.lock');
+const railsGemfileLock = Fixtures.get('Gemfile.rails.lock');
+const webPackerGemfileLock = Fixtures.get('Gemfile.webpacker.lock');
+const mastodonGemfileLock = Fixtures.get('Gemfile.mastodon.lock');
+const rubyCIGemfileLock = Fixtures.get('Gemfile.rubyci.lock');
+const gitlabFossGemfileLock = Fixtures.get('Gemfile.gitlab-foss.lock');
 
 describe('modules/manager/bundler/locked-version', () => {
   test('Parse Rails Gem Lock File', () => {
@@ -36,5 +37,16 @@ describe('modules/manager/bundler/locked-version', () => {
     const parsedLockEntries = extractLockFileEntries(gitlabFossGemfileLock);
     expect(parsedLockEntries.size).toBe(478);
     expect(parsedLockEntries).toMatchSnapshot();
+  });
+
+  it('returns empty map for empty string', () => {
+    const parsedLockEntries = extractLockFileEntries('');
+    expect(parsedLockEntries.size).toBe(0);
+  });
+
+  it('returns empty map when errors occur', () => {
+    const parsedLockEntries = extractLockFileEntries(undefined as never);
+    expect(parsedLockEntries.size).toBe(0);
+    expect(logger.logger.warn).toHaveBeenCalledTimes(1);
   });
 });

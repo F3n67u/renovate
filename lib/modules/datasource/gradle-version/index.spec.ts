@@ -1,11 +1,13 @@
-import { GetPkgReleasesConfig, GetReleasesConfig, getPkgReleases } from '..';
+import type { GetPkgReleasesConfig, GetReleasesConfig } from '..';
+import { getPkgReleases } from '..';
+import { Fixtures } from '../../../../test/fixtures';
 import * as httpMock from '../../../../test/http-mock';
-import { loadJsonFixture, partial } from '../../../../test/util';
+import { partial } from '../../../../test/util';
 import { ExternalHostError } from '../../../types/errors/external-host-error';
 import { id as versioning } from '../../versioning/gradle';
 import { GradleVersionDatasource } from '.';
 
-const allResponse: any = loadJsonFixture('all.json');
+const allResponse = Fixtures.get('all.json');
 
 let config: GetPkgReleasesConfig;
 
@@ -17,9 +19,8 @@ describe('modules/datasource/gradle-version/index', () => {
       config = {
         datasource,
         versioning,
-        depName: 'abc',
+        packageName: 'abc',
       };
-      jest.clearAllMocks();
     });
 
     it('processes real data', async () => {
@@ -30,9 +31,9 @@ describe('modules/datasource/gradle-version/index', () => {
       const res = await getPkgReleases(config);
       expect(res).toMatchSnapshot();
       expect(res).not.toBeNull();
-      expect(res.releases).toHaveLength(300);
+      expect(res?.releases).toHaveLength(300);
       expect(
-        res.releases.filter(({ isDeprecated }) => isDeprecated)
+        res?.releases.filter(({ isDeprecated }) => isDeprecated),
       ).toHaveLength(1);
     });
 
@@ -80,16 +81,16 @@ describe('modules/datasource/gradle-version/index', () => {
         gradleVersionDatasource.getReleases(
           partial<GetReleasesConfig>({
             registryUrl: 'https://services.gradle.org/versions/all',
-          })
-        )
+          }),
+        ),
       ).rejects.toThrow(ExternalHostError);
 
       await expect(
         gradleVersionDatasource.getReleases(
           partial<GetReleasesConfig>({
             registryUrl: 'http://baz.qux',
-          })
-        )
+          }),
+        ),
       ).rejects.toThrow(ExternalHostError);
     });
   });

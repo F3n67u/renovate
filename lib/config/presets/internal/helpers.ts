@@ -1,32 +1,43 @@
 import type { Preset } from '../types';
 
+/* eslint sort-keys: ["error", "asc", {caseSensitive: false, natural: true}] */
+
 export const presets: Record<string, Preset> = {
   disableTypesNodeMajor: {
-    description: 'Disable major updates to <code>@types/node</code>',
+    description: 'Disable `major` updates to `@types/node`.',
     packageRules: [
       {
+        enabled: false,
         matchPackageNames: ['@types/node'],
         matchUpdateTypes: ['major'],
-        enabled: false,
       },
     ],
   },
   followTypescriptNext: {
-    description:
-      'Keep <code>typescript</code> version in sync with the <code>next</code> tag',
+    description: 'Keep `typescript` version in sync with the `next` tag.',
     extends: [':followTag(typescript, next)'],
   },
   followTypescriptRc: {
-    description:
-      'Keep <code>typescript</code> version in sync with the <code>rc</code> tag',
+    description: 'Keep `typescript` version in sync with the `rc` tag.',
     extends: [':followTag(typescript, rc)'],
   },
   pinGitHubActionDigests: {
-    description: 'Pin <code>github-action</code> digests',
+    description: 'Pin `github-action` digests.',
     packageRules: [
       {
         matchDepTypes: ['action'],
         pinDigests: true,
+      },
+    ],
+  },
+  pinGitHubActionDigestsToSemver: {
+    description: 'Convert pinned GitHub Action digests to SemVer.',
+    packageRules: [
+      {
+        extends: ['helpers:pinGitHubActionDigests'],
+        extractVersion: '^(?<version>v\\d+\\.\\d+\\.\\d+)$',
+        versioning:
+          'regex:^v?(?<major>\\d+)(\\.(?<minor>\\d+)\\.(?<patch>\\d+))?$',
       },
     ],
   },

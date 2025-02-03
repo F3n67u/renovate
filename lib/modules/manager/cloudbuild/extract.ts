@@ -1,46 +1,25 @@
-import is from '@sindresorhus/is';
-import { load } from 'js-yaml';
 import { logger } from '../../../logger';
 import { getDep } from '../dockerfile/extract';
-import type { PackageDependency, PackageFile } from '../types';
+import type { PackageFileContent } from '../types';
+import { CloudbuildSteps } from './schema';
 
-export function extractPackageFile(content: string): PackageFile | null {
-  const deps: PackageDependency[] = [];
-  try {
-    // TODO: fix types
-    const doc: any = load(content);
-    if (doc?.steps && is.array(doc.steps)) {
-      for (const step of doc.steps) {
-        if (step.name) {
-          const dep = getDep(step.name);
-          logger.trace(
-            {
-              depName: dep.depName,
-              currentValue: dep.currentValue,
-              currentDigest: dep.currentDigest,
-            },
-            'Cloud Build docker image'
-          );
+export function extractPackageFile(
+  content: string,
+  packageFile?: string,
+): PackageFileContent | null {
+  const deps = CloudbuildSteps.catch(({ error: err }) => {
+    logger.debug(
+      { err, packageFile },
+      'Cloud Build: error extracting Docker images from a configuration file.',
+    );
+    return [];
+  })
+    .transform((steps) => steps.map((step) => getDep(step)))
+    .parse(content);
 
-          deps.push(dep);
-        }
-      }
-    }
-  } catch (err) /* istanbul ignore next */ {
-    if (err.stack?.startsWith('YAMLException:')) {
-      logger.debug(
-        { err },
-        'YAML exception extracting Docker images from a Cloud Build configuration file.'
-      );
-    } else {
-      logger.warn(
-        { err },
-        'Error extracting Docker images from a Cloud Build configuration file.'
-      );
-    }
-  }
   if (!deps.length) {
     return null;
   }
+
   return { deps };
 }

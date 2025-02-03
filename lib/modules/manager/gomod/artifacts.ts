@@ -1,21 +1,24 @@
 import is from '@sindresorhus/is';
+import semver from 'semver';
+import { quote } from 'shlex';
 import upath from 'upath';
 import { GlobalConfig } from '../../../config/global';
-import { PlatformId } from '../../../constants';
 import { TEMPORARY_ERROR } from '../../../constants/error-messages';
 import { logger } from '../../../logger';
+import { coerceArray } from '../../../util/array';
 import { exec } from '../../../util/exec';
 import type { ExecOptions } from '../../../util/exec/types';
+import { filterMap } from '../../../util/filter-map';
 import {
   ensureCacheDir,
+  findLocalSiblingOrParent,
+  isValidLocalPath,
   readLocalFile,
   writeLocalFile,
 } from '../../../util/fs';
 import { getRepoStatus } from '../../../util/git';
-import { getGitAuthenticatedEnvironmentVariables } from '../../../util/git/auth';
-import { find, getAll } from '../../../util/host-rules';
+import { getGitEnvironmentVariables } from '../../../util/git/auth';
 import { regEx } from '../../../util/regex';
-import { createURLFromHostOrURL, validateUrl } from '../../../util/url';
 import { isValid } from '../../versioning/semver';
 import type {
   PackageDependency,
@@ -23,76 +26,46 @@ import type {
   UpdateArtifactsConfig,
   UpdateArtifactsResult,
 } from '../types';
+import { getExtraDepsNotice } from './artifacts-extra';
 
-function getGitEnvironmentVariables(): NodeJS.ProcessEnv {
-  let environmentVariables: NodeJS.ProcessEnv = {};
-
-  // hard-coded logic to use authentication for github.com based on the githubToken for api.github.com
-  const githubToken = find({
-    hostType: PlatformId.Github,
-    url: 'https://api.github.com/',
-  });
-
-  if (githubToken?.token) {
-    environmentVariables = getGitAuthenticatedEnvironmentVariables(
-      'https://github.com/',
-      githubToken
-    );
-  }
-
-  // get extra host rules for other git-based Go Module hosts
-  const hostRules = getAll() || [];
-
-  const goGitAllowedHostType: (string | undefined)[] = [
-    // All known git platforms
-    PlatformId.Azure,
-    PlatformId.Bitbucket,
-    PlatformId.BitbucketServer,
-    PlatformId.Gitea,
-    PlatformId.Github,
-    PlatformId.Gitlab,
-    // plus all without a host type (=== undefined)
-    undefined,
-  ];
-
-  // for each hostRule we add additional authentication variables to the environmentVariables
-  for (const hostRule of hostRules) {
-    if (
-      hostRule?.token &&
-      hostRule.matchHost &&
-      goGitAllowedHostType.includes(hostRule.hostType)
-    ) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      const httpUrl = createURLFromHostOrURL(hostRule.matchHost!)?.toString();
-      if (validateUrl(httpUrl)) {
-        logger.debug(
-          `Adding Git authentication for Go Module retrieval for ${httpUrl} using token auth.`
-        );
-        environmentVariables = getGitAuthenticatedEnvironmentVariables(
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-          httpUrl!,
-          hostRule,
-          environmentVariables
-        );
-      } else {
-        logger.warn(
-          `Could not parse registryUrl ${hostRule.matchHost} or not using http(s). Ignoring`
-        );
-      }
-    }
-  }
-  return environmentVariables;
-}
+const { major, valid } = semver;
 
 function getUpdateImportPathCmds(
   updatedDeps: PackageDependency[],
-  { constraints, newMajor }: UpdateArtifactsConfig
+  { constraints }: UpdateArtifactsConfig,
 ): string[] {
+  // Check if we fail to parse any major versions and log that they're skipped
+  const invalidMajorDeps = updatedDeps.filter(
+    ({ newVersion }) => !valid(newVersion),
+  );
+  if (invalidMajorDeps.length > 0) {
+    invalidMajorDeps.forEach(({ depName }) =>
+      logger.warn(
+        { depName },
+        'Ignoring dependency: Could not get major version',
+      ),
+    );
+  }
+
   const updateImportCommands = updatedDeps
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-    .map((dep) => dep.depName!)
-    .filter((x) => !x.startsWith('gopkg.in'))
-    .map((depName) => `mod upgrade --mod-name=${depName} -t=${newMajor}`);
+    .filter(
+      ({ newVersion }) =>
+        valid(newVersion) && !newVersion!.endsWith('+incompatible'),
+    )
+    .map(({ depName, newVersion }) => ({
+      depName: depName!,
+      newMajor: major(newVersion!),
+    }))
+    // Skip path updates going from v0 to v1
+    .filter(
+      ({ depName, newMajor }) =>
+        depName.startsWith('gopkg.in/') || newMajor > 1,
+    )
+
+    .map(
+      ({ depName, newMajor }) =>
+        `mod upgrade --mod-name=${depName} -t=${newMajor}`,
+    );
 
   if (updateImportCommands.length > 0) {
     let installMarwanModArgs =
@@ -105,17 +78,17 @@ function getUpdateImportPathCmds(
       ) {
         installMarwanModArgs = installMarwanModArgs.replace(
           regEx(/@latest$/),
-          `@${gomodModCompatibility}`
+          `@${gomodModCompatibility}`,
         );
       } else {
         logger.debug(
           { gomodModCompatibility },
-          'marwan-at-work/mod compatibility range is not valid - skipping'
+          'marwan-at-work/mod compatibility range is not valid - skipping',
         );
       }
     } else {
       logger.debug(
-        'No marwan-at-work/mod compatibility range found - installing marwan-at-work/mod latest'
+        'No marwan-at-work/mod compatibility range found - installing marwan-at-work/mod latest',
       );
     }
     updateImportCommands.unshift(`go ${installMarwanModArgs}`);
@@ -129,7 +102,9 @@ function useModcacherw(goVersion: string | undefined): boolean {
     return true;
   }
 
-  const [, majorPart, minorPart] = regEx(/(\d+)\.(\d+)/).exec(goVersion) ?? [];
+  const [, majorPart, minorPart] = coerceArray(
+    regEx(/(\d+)\.(\d+)/).exec(goVersion),
+  );
   const [major, minor] = [majorPart, minorPart].map((x) => parseInt(x, 10));
 
   return (
@@ -154,18 +129,35 @@ export async function updateArtifacts({
     return null;
   }
 
-  const vendorDir = upath.join(upath.dirname(goModFileName), 'vendor/');
-  const vendorModulesFileName = upath.join(vendorDir, 'modules.txt');
-  const useVendor = (await readLocalFile(vendorModulesFileName)) !== null;
+  const goModDir = upath.dirname(goModFileName);
 
+  const vendorDir = upath.join(goModDir, 'vendor/');
+  const vendorModulesFileName = upath.join(vendorDir, 'modules.txt');
+  const useVendor =
+    !!config.postUpdateOptions?.includes('gomodVendor') ||
+    (!config.postUpdateOptions?.includes('gomodSkipVendor') &&
+      (await readLocalFile(vendorModulesFileName)) !== null);
   let massagedGoMod = newGoModContent;
 
-  if (!config.postUpdateOptions?.includes('gomodNoMassage')) {
+  if (config.postUpdateOptions?.includes('gomodMassage')) {
     // Regex match inline replace directive, example:
     // replace golang.org/x/net v1.2.3 => example.com/fork/net v1.4.5
     // https://go.dev/ref/mod#go-mod-file-replace
+
+    // replace bracket after comments, so it doesn't break the regex, doing a complex regex causes problems
+    // when there's a comment and ")" after it, the regex will read replace block until comment.. and stop.
+    massagedGoMod = massagedGoMod
+      .split('\n')
+      .map((line) => {
+        if (line.trim().startsWith('//')) {
+          return line.replace(')', 'renovate-replace-bracket');
+        }
+        return line;
+      })
+      .join('\n');
+
     const inlineReplaceRegEx = regEx(
-      /(\r?\n)(replace\s+[^\s]+\s+=>\s+\.\.\/.*)/g
+      /(\r?\n)(replace\s+[^\s]+\s+=>\s+\.\.\/.*)/g,
     );
 
     // $1 will be matched with the (\r?n) group
@@ -188,20 +180,26 @@ export async function updateArtifacts({
       match.replace(/(\r?\n)/g, '$1// renovate-replace ');
 
     // Comment out golang replace directives
-    massagedGoMod = newGoModContent
+    massagedGoMod = massagedGoMod
       .replace(inlineReplaceRegEx, inlineCommentOut)
       .replace(blockReplaceRegEx, blockCommentOut);
 
     if (massagedGoMod !== newGoModContent) {
-      logger.debug('Removed some relative replace statements from go.mod');
+      logger.debug(
+        'Removed some relative replace statements and comments from go.mod',
+      );
     }
   }
+  const goConstraints =
+    config.constraints?.go ?? (await getGoConstraints(goModFileName));
+
   try {
     await writeLocalFile(goModFileName, massagedGoMod);
 
     const cmd = 'go';
     const execOptions: ExecOptions = {
       cwdFile: goModFileName,
+      userConfiguredEnv: config.env,
       extraEnv: {
         GOPATH: await ensureCacheDir('go'),
         GOPROXY: process.env.GOPROXY,
@@ -209,29 +207,51 @@ export async function updateArtifacts({
         GONOPROXY: process.env.GONOPROXY,
         GONOSUMDB: process.env.GONOSUMDB,
         GOSUMDB: process.env.GOSUMDB,
-        GOFLAGS: useModcacherw(config.constraints?.go) ? '-modcacherw' : null,
+        GOINSECURE: process.env.GOINSECURE,
+        GOFLAGS: useModcacherw(goConstraints)
+          ? '-modcacherw'
+          : /* istanbul ignore next: hard to test */ null,
         CGO_ENABLED: GlobalConfig.get('binarySource') === 'docker' ? '0' : null,
-        ...getGitEnvironmentVariables(),
+        ...getGitEnvironmentVariables(['go']),
       },
-      docker: {
-        image: 'go',
-        tagConstraint: config.constraints?.go,
-        tagScheme: 'npm',
-      },
+      docker: {},
+      toolConstraints: [
+        {
+          toolName: 'golang',
+          constraint: goConstraints,
+        },
+      ],
     };
 
     const execCommands: string[] = [];
 
-    let args = 'get -d -t ./...';
-    logger.debug({ cmd, args }, 'go get command included');
+    let goGetDirs: string | undefined;
+    if (config.goGetDirs) {
+      goGetDirs = config.goGetDirs
+        .filter((dir) => {
+          const isValid = isValidLocalPath(dir);
+          if (!isValid) {
+            logger.warn({ dir }, 'Invalid path in goGetDirs');
+          }
+          return isValid;
+        })
+        .map(quote)
+        .join(' ');
+
+      if (goGetDirs === '') {
+        throw new Error('Invalid goGetDirs');
+      }
+    }
+
+    let args = `get -d -t ${goGetDirs ?? './...'}`;
+    logger.trace({ cmd, args }, 'go get command included');
     execCommands.push(`${cmd} ${args}`);
 
-    // Update import paths on major updates above v1
+    // Update import paths on major updates
     const isImportPathUpdateRequired =
       config.postUpdateOptions?.includes('gomodUpdateImportPaths') &&
-      config.updateType === 'major' &&
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      config.newMajor! > 1;
+      config.updateType === 'major';
+
     if (isImportPathUpdateRequired) {
       const updateImportCmds = getUpdateImportPathCmds(updatedDeps, config);
       if (updateImportCmds.length > 0) {
@@ -245,30 +265,54 @@ export async function updateArtifacts({
       !config.postUpdateOptions?.includes('gomodUpdateImportPaths') &&
       config.updateType === 'major';
     if (mustSkipGoModTidy) {
-      logger.debug({ cmd, args }, 'go mod tidy command skipped');
+      logger.debug('go mod tidy command skipped');
     }
 
-    const tidyOpts = config.postUpdateOptions?.includes('gomodTidy1.17')
-      ? ' -compat=1.17'
-      : '';
+    let tidyOpts = '';
+    if (config.postUpdateOptions?.includes('gomodTidy1.17')) {
+      tidyOpts += ' -compat=1.17';
+    }
+    if (config.postUpdateOptions?.includes('gomodTidyE')) {
+      tidyOpts += ' -e';
+    }
+
     const isGoModTidyRequired =
       !mustSkipGoModTidy &&
-      (config.postUpdateOptions?.includes('gomodTidy') ||
-        config.postUpdateOptions?.includes('gomodTidy1.17') ||
+      (config.postUpdateOptions?.includes('gomodTidy') === true ||
+        config.postUpdateOptions?.includes('gomodTidy1.17') === true ||
+        config.postUpdateOptions?.includes('gomodTidyE') === true ||
         (config.updateType === 'major' && isImportPathUpdateRequired));
     if (isGoModTidyRequired) {
       args = 'mod tidy' + tidyOpts;
-      logger.debug({ cmd, args }, 'go mod tidy command included');
+      logger.debug('go mod tidy command included');
       execCommands.push(`${cmd} ${args}`);
     }
 
+    const goWorkSumFileName = upath.join(goModDir, 'go.work.sum');
     if (useVendor) {
-      args = 'mod vendor';
-      logger.debug({ cmd, args }, 'go mod vendor command included');
-      execCommands.push(`${cmd} ${args}`);
+      // If we find a go.work, then use go workspace vendoring.
+      const goWorkFile = await findLocalSiblingOrParent(
+        goModFileName,
+        'go.work',
+      );
+
+      if (goWorkFile) {
+        args = 'work vendor';
+        logger.debug('using go work vendor');
+        execCommands.push(`${cmd} ${args}`);
+
+        args = 'work sync';
+        logger.debug('using go work sync');
+        execCommands.push(`${cmd} ${args}`);
+      } else {
+        args = 'mod vendor';
+        logger.debug('using go mod vendor');
+        execCommands.push(`${cmd} ${args}`);
+      }
+
       if (isGoModTidyRequired) {
         args = 'mod tidy' + tidyOpts;
-        logger.debug({ cmd, args }, 'go mod tidy command included');
+        logger.debug('go mod tidy command included');
         execCommands.push(`${cmd} ${args}`);
       }
     }
@@ -276,27 +320,43 @@ export async function updateArtifacts({
     // We tidy one more time as a solution for #6795
     if (isGoModTidyRequired) {
       args = 'mod tidy' + tidyOpts;
-      logger.debug({ cmd, args }, 'additional go mod tidy command included');
+      logger.debug('go mod tidy command included');
       execCommands.push(`${cmd} ${args}`);
     }
 
     await exec(execCommands, execOptions);
 
     const status = await getRepoStatus();
-    if (!status.modified.includes(sumFileName)) {
+    if (
+      !status.modified.includes(sumFileName) &&
+      !status.modified.includes(goModFileName) &&
+      !status.modified.includes(goWorkSumFileName)
+    ) {
       return null;
     }
 
-    logger.debug('Returning updated go.sum');
-    const res: UpdateArtifactsResult[] = [
-      {
+    const res: UpdateArtifactsResult[] = [];
+    if (status.modified.includes(sumFileName)) {
+      logger.debug('Returning updated go.sum');
+      res.push({
         file: {
           type: 'addition',
           path: sumFileName,
           contents: await readLocalFile(sumFileName),
         },
-      },
-    ];
+      });
+    }
+
+    if (status.modified.includes(goWorkSumFileName)) {
+      logger.debug('Returning updated go.work.sum');
+      res.push({
+        file: {
+          type: 'addition',
+          path: goWorkSumFileName,
+          contents: await readLocalFile(goWorkSumFileName),
+        },
+      });
+    }
 
     // Include all the .go file import changes
     if (isImportPathUpdateRequired) {
@@ -326,7 +386,7 @@ export async function updateArtifacts({
           });
         }
       }
-      for (const f of status.deleted || []) {
+      for (const f of coerceArray(status.deleted)) {
         res.push({
           file: {
             type: 'deletion',
@@ -336,18 +396,35 @@ export async function updateArtifacts({
       }
     }
 
-    const finalGoModContent = (
-      await readLocalFile(goModFileName, 'utf8')
-    ).replace(regEx(/\/\/ renovate-replace /g), '');
+    // TODO: throws in tests (#22198)
+    const finalGoModContent = (await readLocalFile(goModFileName, 'utf8'))!
+      .replace(regEx(/\/\/ renovate-replace /g), '')
+      .replace(regEx(/renovate-replace-bracket/g), ')');
     if (finalGoModContent !== newGoModContent) {
-      logger.debug('Found updated go.mod after go.sum update');
-      res.push({
+      const artifactResult: UpdateArtifactsResult = {
         file: {
           type: 'addition',
           path: goModFileName,
           contents: finalGoModContent,
         },
-      });
+      };
+
+      const updatedDepNames = filterMap(updatedDeps, (dep) => dep?.depName);
+      const extraDepsNotice = getExtraDepsNotice(
+        newGoModContent,
+        finalGoModContent,
+        updatedDepNames,
+      );
+
+      if (extraDepsNotice) {
+        artifactResult.notice = {
+          file: goModFileName,
+          message: extraDepsNotice,
+        };
+      }
+
+      logger.debug('Found updated go.mod after go.sum update');
+      res.push(artifactResult);
     }
     return res;
   } catch (err) {
@@ -365,4 +442,19 @@ export async function updateArtifacts({
       },
     ];
   }
+}
+
+async function getGoConstraints(
+  goModFileName: string,
+): Promise<string | undefined> {
+  const content = (await readLocalFile(goModFileName, 'utf8')) ?? null;
+  if (!content) {
+    return undefined;
+  }
+  const re = regEx(/^go\s*(?<gover>\d+\.\d+)$/m);
+  const match = re.exec(content);
+  if (!match?.groups?.gover) {
+    return undefined;
+  }
+  return '^' + match.groups.gover;
 }

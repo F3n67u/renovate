@@ -1,11 +1,14 @@
-import { GithubTagsDatasource } from '../../datasource/github-tags';
+import { FlutterVersionDatasource } from '../../datasource/flutter-version';
 import * as semverVersioning from '../../versioning/semver';
 
 export { extractPackageFile } from './extract';
 
-export const supportedDatasources = [GithubTagsDatasource.id];
+export const displayName = 'FVM';
+export const url = 'https://fvm.app';
 
 export const defaultConfig = {
-  fileMatch: ['(^|\\/)\\.fvm\\/fvm_config\\.json$'],
+  fileMatch: ['(^|/)\\.fvm/fvm_config\\.json$', '(^|/)\\.fvmrc$'],
   versioning: semverVersioning.id,
 };
+
+export const supportedDatasources = [FlutterVersionDatasource.id];

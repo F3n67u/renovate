@@ -1,6 +1,6 @@
 import * as httpMock from '../../../../test/http-mock';
 import type { UpdateArtifact } from '../types';
-import { updateArtifacts } from './artifacts';
+import { updateArtifacts } from '.';
 
 const defaultTo = '1.2.3';
 const newUnixWrapperContent = `Unix wrapper script for ${defaultTo}`;
@@ -8,7 +8,7 @@ const newWindowsWrapperContent = `Windows wrapper script for ${defaultTo}`;
 
 function artifactForPath(
   path: string,
-  newVersion: string = defaultTo
+  newVersion: string = defaultTo,
 ): UpdateArtifact {
   return {
     packageFileName: path,

@@ -1,14 +1,16 @@
 import { getOptions } from '../../config/options';
 import { loadModules } from '../../util/modules';
 import { isVersioningApiConstructor } from './common';
-import { GenericVersion, GenericVersioningApi } from './generic';
+import type { GenericVersion } from './generic';
+import { GenericVersioningApi } from './generic';
 import * as semverVersioning from './semver';
+import * as semverCoercedVersioning from './semver-coerced';
 import type { VersioningApi, VersioningApiConstructor } from './types';
 import * as allVersioning from '.';
 
 const supportedSchemes = getOptions().find(
-  (option) => option.name === 'versioning'
-).allowedValues;
+  (option) => option.name === 'versioning',
+)?.allowedValues;
 
 describe('modules/versioning/index', () => {
   it('has api', () => {
@@ -35,7 +37,7 @@ describe('modules/versioning/index', () => {
   it('validates', () => {
     function validate(
       module: VersioningApi | VersioningApiConstructor,
-      name: string
+      name: string,
     ): boolean {
       const mod = isVersioningApiConstructor(module) ? new module() : module;
 
@@ -52,17 +54,17 @@ describe('modules/versioning/index', () => {
     expect(Array.from(vers.keys())).toEqual(Object.keys(loadedVers));
 
     for (const name of vers.keys()) {
-      const ver = vers.get(name);
+      const ver = vers.get(name)!;
       expect(validate(ver, name)).toBeTrue();
     }
   });
 
-  it('should fallback to semver', () => {
+  it('should fallback to semver-coerced', () => {
     expect(allVersioning.get(undefined)).toBe(
-      allVersioning.get(semverVersioning.id)
+      allVersioning.get(semverCoercedVersioning.id),
     );
     expect(allVersioning.get('unknown')).toBe(
-      allVersioning.get(semverVersioning.id)
+      allVersioning.get(semverCoercedVersioning.id),
     );
   });
 
@@ -72,6 +74,7 @@ describe('modules/versioning/index', () => {
 
   describe('should return the same interface', () => {
     const optionalFunctions = [
+      'allowUnstableMajorUpgrades',
       'isLessThanRange',
       'valueToVersion',
       'constructor',
@@ -82,13 +85,15 @@ describe('modules/versioning/index', () => {
       'toLocaleString',
       'toString',
       'valueOf',
+      'subset',
+      'isSame',
     ];
     const npmApi = Object.keys(allVersioning.get(semverVersioning.id))
       .filter((val) => !optionalFunctions.includes(val))
       .sort();
 
     function getAllPropertyNames(obj: any): string[] {
-      const props = [];
+      const props: string[] = [];
       let o = obj;
 
       do {
@@ -102,25 +107,25 @@ describe('modules/versioning/index', () => {
       return props;
     }
 
-    for (const supportedScheme of supportedSchemes) {
-      it(supportedScheme, () => {
+    for (const supportedScheme of supportedSchemes ?? []) {
+      it(supportedScheme, async () => {
         const schemeKeys = getAllPropertyNames(
-          allVersioning.get(supportedScheme)
+          allVersioning.get(supportedScheme),
         )
           .filter(
-            (val) => !optionalFunctions.includes(val) && !val.startsWith('_')
+            (val) => !optionalFunctions.includes(val) && !val.startsWith('_'),
           )
           .sort();
 
         expect(schemeKeys).toEqual(npmApi);
 
-        const apiOrCtor = require('./' + supportedScheme).api;
+        const apiOrCtor = (await import(`./${supportedScheme}`)).api;
         if (isVersioningApiConstructor(apiOrCtor)) {
           return;
         }
 
         expect(Object.keys(apiOrCtor).sort()).toEqual(
-          Object.keys(allVersioning.get(supportedScheme)).sort()
+          Object.keys(allVersioning.get(supportedScheme)).sort(),
         );
       });
     }
@@ -139,7 +144,7 @@ describe('modules/versioning/index', () => {
       const api = new DummyScheme();
       const schemeKeys = getAllPropertyNames(api)
         .filter(
-          (val) => !optionalFunctions.includes(val) && !val.startsWith('_')
+          (val) => !optionalFunctions.includes(val) && !val.startsWith('_'),
         )
         .sort();
 

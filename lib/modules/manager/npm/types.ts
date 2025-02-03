@@ -67,12 +67,22 @@ export type NpmDepType =
   | 'dependencies'
   | 'devDependencies'
   | 'optionalDependencies'
+  | 'overrides'
   | 'peerDependencies'
   | 'resolutions';
 
-export interface NpmManagerData extends Record<string, any> {
-  hasPackageManager?: boolean;
+export interface NpmLockFiles {
+  yarnLock?: string;
+  packageLock?: string;
+  shrinkwrapJson?: string;
+  pnpmShrinkwrap?: string;
+  npmLock?: string;
+}
 
-  lernaJsonFile?: string;
+export interface NpmManagerData extends NpmLockFiles, Record<string, any> {
+  hasPackageManager?: boolean;
+  packageJsonName?: string;
+  parents?: string[];
   yarnZeroInstall?: boolean;
+  workspacesPackages?: string[] | string;
 }

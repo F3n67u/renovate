@@ -1,6 +1,6 @@
+import { logger } from '../../../logger';
 import { cache } from '../../../util/cache/package/decorator';
 import { regEx } from '../../../util/regex';
-import { Datasource } from '../datasource';
 import type { DigestConfig, GetReleasesConfig, ReleaseResult } from '../types';
 import { GitDatasource } from './base';
 import type { RawRefs } from './types';
@@ -8,14 +8,18 @@ import type { RawRefs } from './types';
 // git will prompt for known hosts or passwords, unless we activate BatchMode
 process.env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
 
-export class GitRefsDatasource extends Datasource {
-  static readonly id = 'git-refs';
+export class GitRefsDatasource extends GitDatasource {
+  static override readonly id = 'git-refs';
 
   constructor() {
     super(GitRefsDatasource.id);
   }
 
   override readonly customRegistrySupport = false;
+
+  override readonly sourceUrlSupport = 'package';
+  override readonly sourceUrlNote =
+    'The source URL is determined by using the `packageName` and `registryUrl`.';
 
   @cache({
     namespace: `datasource-${GitRefsDatasource.id}`,
@@ -24,10 +28,13 @@ export class GitRefsDatasource extends Datasource {
   override async getReleases({
     packageName,
   }: GetReleasesConfig): Promise<ReleaseResult | null> {
-    const rawRefs: RawRefs[] | null = await GitDatasource.getRawRefs(
-      { packageName },
-      this.id
-    );
+    let rawRefs: RawRefs[] | null = null;
+
+    try {
+      rawRefs = await this.getRawRefs({ packageName });
+    } catch (err) /* istanbul ignore next */ {
+      logger.debug({ err }, 'Error getting git-refs');
+    }
 
     if (!rawRefs) {
       return null;
@@ -57,12 +64,9 @@ export class GitRefsDatasource extends Datasource {
 
   override async getDigest(
     { packageName }: DigestConfig,
-    newValue?: string
+    newValue?: string,
   ): Promise<string | null> {
-    const rawRefs: RawRefs[] | null = await GitDatasource.getRawRefs(
-      { packageName },
-      this.id
-    );
+    const rawRefs: RawRefs[] | null = await this.getRawRefs({ packageName });
 
     // istanbul ignore if
     if (!rawRefs) {
@@ -73,11 +77,11 @@ export class GitRefsDatasource extends Datasource {
     if (newValue) {
       ref = rawRefs.find(
         (rawRef) =>
-          ['heads', 'tags'].includes(rawRef.type) && rawRef.value === newValue
+          ['heads', 'tags'].includes(rawRef.type) && rawRef.value === newValue,
       );
     } else {
       ref = rawRefs.find(
-        (rawRef) => rawRef.type === '' && rawRef.value === 'HEAD'
+        (rawRef) => rawRef.type === '' && rawRef.value === 'HEAD',
       );
     }
     if (ref) {

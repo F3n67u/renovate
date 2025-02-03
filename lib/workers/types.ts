@@ -4,18 +4,22 @@ import type {
   LegacyAdminConfig,
   RenovateConfig,
   RenovateSharedConfig,
+  UserEnv,
   ValidationMessage,
 } from '../config/types';
 import type { Release } from '../modules/datasource/types';
 import type {
   ArtifactError,
+  ArtifactNotice,
+  ExtractConfig,
   LookupUpdate,
   PackageDependency,
   PackageFile,
 } from '../modules/manager/types';
 import type { PlatformPrOptions } from '../modules/platform/types';
 import type { FileChange } from '../util/git/types';
-import type { MergeConfidence } from '../util/merge-confidence';
+import type { MergeConfidence } from '../util/merge-confidence/types';
+import type { Timestamp } from '../util/timestamp';
 import type {
   ChangeLogRelease,
   ChangeLogResult,
@@ -28,6 +32,7 @@ export interface BranchUpgradeConfig
     Partial<LookupUpdate>,
     RenovateSharedConfig {
   artifactErrors?: ArtifactError[];
+  artifactNotices?: ArtifactNotice[];
   autoReplaceStringTemplate?: string;
   baseDeps?: PackageDependency[];
   branchName: string;
@@ -37,15 +42,18 @@ export interface BranchUpgradeConfig
   currentDigest?: string;
   currentDigestShort?: string;
   currentValue?: string;
-  endpoint?: string;
+
+  currentValueTemplate?: string;
+  depIndex?: number;
+  depTypes?: string[];
+
+  displayPending?: string;
   excludeCommitPaths?: string[];
   githubName?: string;
   group?: GroupConfig;
-  constraints?: Record<string, string>;
   groupName?: string;
   groupSlug?: string;
-  language?: string;
-  manager?: string;
+  manager: string;
   packageFile?: string;
   lockFile?: string;
   lockFiles?: string[];
@@ -56,16 +64,19 @@ export interface BranchUpgradeConfig
   prBodyTemplate?: string;
   prPriority?: number;
   prTitle?: string;
+  prTitleStrict?: boolean;
+  prettyNewMajor?: string;
+  prettyNewVersion?: string;
   releases?: ReleaseWithNotes[];
-  releaseTimestamp?: string;
+  releaseTimestamp?: Timestamp;
   repoName?: string;
-  minimumConfidence?: MergeConfidence;
+  minimumConfidence?: MergeConfidence | undefined;
   sourceDirectory?: string;
 
   updatedPackageFiles?: FileChange[];
   updatedArtifacts?: FileChange[];
 
-  logJSON?: ChangeLogResult;
+  logJSON?: ChangeLogResult | null;
 
   hasReleaseNotes?: boolean;
   homepage?: string;
@@ -75,6 +86,7 @@ export interface BranchUpgradeConfig
   sourceRepo?: string;
   sourceRepoOrg?: string;
   sourceRepoName?: string;
+  env?: UserEnv;
 }
 
 export type PrBlockedBy =
@@ -84,25 +96,23 @@ export type PrBlockedBy =
   | 'RateLimited'
   | 'Error';
 
-// eslint-disable-next-line typescript-enum/no-enum
-export enum BranchResult {
-  AlreadyExisted = 'already-existed',
-  Automerged = 'automerged',
-  Done = 'done',
-  Error = 'error',
-  NeedsApproval = 'needs-approval',
-  NeedsPrApproval = 'needs-pr-approval',
-  NotScheduled = 'not-scheduled',
-  NoWork = 'no-work',
-  Pending = 'pending',
-  PrCreated = 'pr-created',
-  PrEdited = 'pr-edited',
-  PrLimitReached = 'pr-limit-reached',
-  CommitLimitReached = 'commit-limit-reached',
-  BranchLimitReached = 'branch-limit-reached',
-  Rebase = 'rebase',
-  UpdateNotScheduled = 'update-not-scheduled',
-}
+export type BranchResult =
+  | 'already-existed'
+  | 'automerged'
+  | 'done'
+  | 'error'
+  | 'needs-approval'
+  | 'needs-pr-approval'
+  | 'not-scheduled'
+  | 'no-work'
+  | 'pending'
+  | 'pr-created'
+  | 'pr-edited'
+  | 'pr-limit-reached'
+  | 'commit-limit-reached'
+  | 'branch-limit-reached'
+  | 'rebase'
+  | 'update-not-scheduled';
 
 export interface BranchConfig
   extends BranchUpgradeConfig,
@@ -110,11 +120,12 @@ export interface BranchConfig
     PlatformPrOptions {
   automergeComment?: string;
   automergeType?: string;
-  baseBranch?: string;
+  automergedPreviously?: boolean;
+  baseBranch: string;
   errors?: ValidationMessage[];
   hasTypes?: boolean;
   dependencyDashboardChecks?: Record<string, string>;
-  releaseTimestamp?: string;
+  releaseTimestamp?: Timestamp;
   forceCommit?: boolean;
   rebaseRequested?: boolean;
   result?: BranchResult;
@@ -124,4 +135,74 @@ export interface BranchConfig
   prNo?: number;
   stopUpdating?: boolean;
   isConflicted?: boolean;
+  commitFingerprint?: string;
+  skipBranchUpdate?: boolean;
+  env?: UserEnv;
+}
+
+export interface BranchMetadata {
+  branchName: string;
+  branchSha?: string | null;
+  baseBranch?: string;
+  baseBranchSha?: string | null;
+  automerge?: boolean;
+  isModified?: boolean;
+  isPristine?: boolean;
+}
+
+export interface BaseBranchMetadata {
+  branchName: string;
+  sha: string;
+}
+
+export interface BranchSummary {
+  baseBranches: BaseBranchMetadata[];
+  branches: BranchMetadata[];
+  cacheModified?: boolean;
+  defaultBranch?: string;
+  inactiveBranches: string[];
+}
+
+export interface WorkerExtractConfig extends ExtractConfig {
+  manager: string;
+  fileList: string[];
+  fileMatch?: string[];
+  includePaths?: string[];
+  ignorePaths?: string[];
+  enabled?: boolean;
+}
+
+export interface DepWarnings {
+  warnings: string[];
+  warningFiles: string[];
+}
+
+export interface SelectAllConfig extends RenovateConfig {
+  dependencyDashboardRebaseAllOpen?: boolean;
+  dependencyDashboardAllPending?: boolean;
+  dependencyDashboardAllRateLimited?: boolean;
+}
+
+export interface UpgradeFingerprintConfig {
+  autoReplaceStringTemplate?: string;
+  currentDigest?: string;
+  currentValue?: string;
+  currentVersion?: string;
+  datasource?: string;
+  depName?: string;
+  env?: UserEnv;
+  lockFile?: string;
+  lockedVersion?: string;
+  manager?: string | null;
+  newName?: string;
+  newDigest?: string;
+  newValue?: string;
+  newVersion?: string;
+  packageFile?: string;
+  replaceString?: string;
+}
+
+export interface ExtractResult {
+  extractionFingerprints: Record<string, string | undefined>;
+  packageFiles: Record<string, PackageFile[]>;
 }

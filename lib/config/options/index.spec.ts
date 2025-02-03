@@ -6,7 +6,7 @@ jest.unmock('../../modules/platform');
 
 describe('config/options/index', () => {
   it('test manager should have no defaultConfig', () => {
-    jest.mock('../../modules/manager', () => ({
+    jest.doMock('../../modules/manager', () => ({
       getManagers: jest.fn(() => new Map().set('testManager', {})),
     }));
 
@@ -15,7 +15,6 @@ describe('config/options/index', () => {
   });
 
   it('supportedManagers should have valid names', () => {
-    jest.unmock('../../modules/manager');
     const opts = getOptions();
     const managerList = Array.from(manager.getManagers().keys());
 
@@ -23,7 +22,6 @@ describe('config/options/index', () => {
       .filter((option) => option.supportedManagers)
       .forEach((option) => {
         expect(option.supportedManagers).toBeNonEmptyArray();
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         for (const item of option.supportedManagers!) {
           expect(managerList).toContain(item);
         }
@@ -31,7 +29,6 @@ describe('config/options/index', () => {
   });
 
   it('supportedPlatforms should have valid names', () => {
-    jest.unmock('../../modules/platform');
     const opts = getOptions();
     const platformList = Array.from(platform.getPlatforms().keys());
 
@@ -39,10 +36,15 @@ describe('config/options/index', () => {
       .filter((option) => option.supportedPlatforms)
       .forEach((option) => {
         expect(option.supportedPlatforms).toBeNonEmptyArray();
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         for (const item of option.supportedPlatforms!) {
           expect(platformList).toContain(item);
         }
       });
+  });
+
+  it('should not contain duplicate option names', () => {
+    const optsNames = getOptions().map((option) => option.name);
+    const optsNameSet = new Set(optsNames);
+    expect(optsNames).toHaveLength(optsNameSet.size);
   });
 });

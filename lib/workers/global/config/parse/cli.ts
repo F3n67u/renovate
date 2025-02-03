@@ -1,10 +1,10 @@
 import { Command } from 'commander';
-import JSON5 from 'json5';
 import { getOptions } from '../../../../config/options';
 import type { AllConfig } from '../../../../config/types';
 import { pkg } from '../../../../expose.cjs';
 import { logger } from '../../../../logger';
 import { regEx } from '../../../../util/regex';
+import { coersions } from './coersions';
 import type { ParseConfigOptions } from './types';
 
 export function getCliName(option: ParseConfigOptions): string {
@@ -20,6 +20,11 @@ export function getConfig(input: string[]): AllConfig {
   const argv = input
     .map((a) =>
       a
+        .replace(
+          '--allow-post-upgrade-command-templating',
+          '--allow-command-templating',
+        )
+        .replace('--allowed-post-upgrade-commands', '--allowed-commands')
         .replace('--endpoints=', '--host-rules=')
         .replace('--expose-env=true', '--trust-level=high')
         .replace('--expose-env', '--trust-level=high')
@@ -30,49 +35,18 @@ export function getConfig(input: string[]): AllConfig {
         .replace('--azure-auto-complete', '--platform-automerge') // migrate: azureAutoComplete
         .replace('--git-lab-automerge', '--platform-automerge') // migrate: gitLabAutomerge
         .replace(/^--dry-run$/, '--dry-run=true')
+        .replace(/^--require-config$/, '--require-config=true')
+        .replace('--aliases', '--registry-aliases')
+        .replace('--include-forks=true', '--fork-processing=enabled')
+        .replace('--include-forks', '--fork-processing=enabled')
+        .replace('--recreate-closed=false', '--recreate-when=auto')
+        .replace('--recreate-closed=true', '--recreate-when=always')
+        .replace('--recreate-closed', '--recreate-when=always'),
     )
     .filter((a) => !a.startsWith('--git-fs'));
   const options = getOptions();
 
   const config: Record<string, any> = {};
-
-  const coersions: Record<string, (arg: string) => unknown> = {
-    boolean: (val: string): boolean => {
-      if (val === 'true' || val === '') {
-        return true;
-      }
-      if (val === 'false') {
-        return false;
-      }
-      throw new Error(
-        "Invalid boolean value: expected 'true' or 'false', but got '" +
-          val +
-          "'"
-      );
-    },
-    array: (val: string): string[] => {
-      if (val === '') {
-        return [];
-      }
-      try {
-        return JSON5.parse(val);
-      } catch (err) {
-        return val.split(',').map((el) => el.trim());
-      }
-    },
-    object: (val: string): any => {
-      if (val === '') {
-        return {};
-      }
-      try {
-        return JSON5.parse(val);
-      } catch (err) {
-        throw new Error("Invalid JSON value: '" + val + "'");
-      }
-    },
-    string: (val: string): string => val,
-    integer: parseInt,
-  };
 
   let program = new Command().arguments('[repositories...]');
 
@@ -83,7 +57,7 @@ export function getConfig(input: string[]): AllConfig {
       program = program.option(
         optionString,
         option.description,
-        coersions[option.type]
+        coersions[option.type],
       );
     }
   });
@@ -95,11 +69,11 @@ export function getConfig(input: string[]): AllConfig {
     console.log('');
     console.log('    $ renovate --token 123test singapore/lint-condo');
     console.log(
-      '    $ LOG_LEVEL=debug renovate --labels=renovate,dependency --ignore-unstable=false singapore/lint-condo'
+      '    $ LOG_LEVEL=debug renovate --labels=renovate,dependency --ignore-unstable=false singapore/lint-condo',
     );
     console.log('    $ renovate singapore/lint-condo singapore/package-test');
     console.log(
-      `    $ renovate singapore/lint-condo --onboarding-config='{"extends":["config:base"]}'`
+      `    $ renovate singapore/lint-condo --onboarding-config='{"extends":["config:recommended"]}'`,
     );
     /* eslint-enable no-console */
   }
@@ -119,16 +93,29 @@ export function getConfig(input: string[]): AllConfig {
             if (option.name === 'dryRun') {
               if (config[option.name] === 'true') {
                 logger.warn(
-                  'cli config dryRun property has been changed to full'
+                  'cli config dryRun property has been changed to full',
                 );
                 config[option.name] = 'full';
               } else if (config[option.name] === 'false') {
                 logger.warn(
-                  'cli config dryRun property has been changed to null'
+                  'cli config dryRun property has been changed to null',
                 );
                 config[option.name] = null;
               } else if (config[option.name] === 'null') {
                 config[option.name] = null;
+              }
+            }
+            if (option.name === 'requireConfig') {
+              if (config[option.name] === 'true') {
+                logger.warn(
+                  'cli config requireConfig property has been changed to required',
+                );
+                config[option.name] = 'required';
+              } else if (config[option.name] === 'false') {
+                logger.warn(
+                  'cli config requireConfig property has been changed to optional',
+                );
+                config[option.name] = 'optional';
               }
             }
           }

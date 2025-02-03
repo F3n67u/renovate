@@ -10,15 +10,20 @@ import {
   writeLocalFile,
 } from '../../../util/fs';
 import * as hostRules from '../../../util/host-rules';
+import { regEx } from '../../../util/regex';
 
 import type { UpdateArtifact, UpdateArtifactsResult } from '../types';
 
 const hexRepoUrl = 'https://hex.pm/';
+const hexRepoOrgUrlRegex = regEx(
+  `^https://hex\\.pm/api/repos/(?<organization>[a-z0-9_]+)/$`,
+);
 
 export async function updateArtifacts({
   packageFileName,
   updatedDeps,
   newPackageFileContent,
+  config,
 }: UpdateArtifact): Promise<UpdateArtifactsResult[] | null> {
   logger.debug(`mix.getArtifacts(${packageFileName})`);
   if (updatedDeps.length < 1) {
@@ -27,7 +32,7 @@ export async function updateArtifacts({
   }
 
   const lockFileName =
-    (await findLocalSiblingOrParent(packageFileName, 'mix.lock')) || 'mix.lock';
+    (await findLocalSiblingOrParent(packageFileName, 'mix.lock')) ?? 'mix.lock';
   try {
     await writeLocalFile(packageFileName, newPackageFileContent);
   } catch (err) {
@@ -49,6 +54,24 @@ export async function updateArtifacts({
   }
 
   const organizations = new Set<string>();
+
+  const hexHostRulesWithMatchHost = hostRules
+    .getAll()
+    .filter(
+      (hostRule) =>
+        !!hostRule.matchHost && hexRepoOrgUrlRegex.test(hostRule.matchHost),
+    );
+
+  for (const { matchHost } of hexHostRulesWithMatchHost) {
+    if (matchHost) {
+      const result = hexRepoOrgUrlRegex.exec(matchHost);
+
+      if (result?.groups) {
+        const { organization } = result.groups;
+        organizations.add(organization);
+      }
+    }
+  }
 
   for (const { packageName } of updatedDeps) {
     if (packageName) {
@@ -75,9 +98,19 @@ export async function updateArtifacts({
 
   const execOptions: ExecOptions = {
     cwdFile: packageFileName,
-    docker: {
-      image: 'elixir',
-    },
+    docker: {},
+    userConfiguredEnv: config.env,
+    toolConstraints: [
+      {
+        toolName: 'erlang',
+        // https://hexdocs.pm/elixir/1.14.5/compatibility-and-deprecations.html#compatibility-between-elixir-and-erlang-otp
+        constraint: config.constraints?.erlang ?? '^26',
+      },
+      {
+        toolName: 'elixir',
+        constraint: config.constraints?.elixir,
+      },
+    ],
     preCommands,
   };
   const command = [
@@ -99,7 +132,7 @@ export async function updateArtifacts({
 
     logger.debug(
       { err, message: err.message, command },
-      'Failed to update Mix lock file'
+      'Failed to update Mix lock file',
     );
 
     return [

@@ -1,9 +1,10 @@
-import { loadFixture, partial } from '../../../../../../../test/util';
+import { Fixtures } from '../../../../../../../test/fixtures';
+import { partial } from '../../../../../../../test/util';
 import type { UpdateLockedConfig } from '../../../../types';
 import { updateLockedDependency } from '.';
 
-const yarnLock1 = loadFixture('express.yarn.lock');
-const yarn2Lock = loadFixture('yarn2.lock');
+const yarnLock1 = Fixtures.get('express.yarn.lock');
+const yarn2Lock = Fixtures.get('yarn2.lock');
 
 describe('modules/manager/npm/update/locked-dependency/yarn-lock/index', () => {
   describe('updateLockedDependency()', () => {
@@ -20,6 +21,9 @@ describe('modules/manager/npm/update/locked-dependency/yarn-lock/index', () => {
 
     it('returns if yarn lock 2', () => {
       config.lockFileContent = yarn2Lock;
+      config.depName = 'chalk';
+      config.currentVersion = '2.4.2';
+      config.newVersion = '2.4.3';
       expect(updateLockedDependency(config).status).toBe('unsupported');
     });
 

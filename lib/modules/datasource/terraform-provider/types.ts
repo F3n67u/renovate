@@ -11,6 +11,7 @@ export interface TerraformBuild {
   arch: string;
   filename: string;
   url: string;
+  shasums_url?: string;
 }
 
 export interface TerraformProvider {
@@ -23,13 +24,21 @@ export interface TerraformProvider {
   published_at: string;
 }
 
-export type TerraformProviderReleaseBackend = Record<
-  string,
-  {
-    name: string;
-    versions: VersionsReleaseBackend;
-  }
->;
+/**
+ * API Docs https://www.terraform.io/internals/provider-registry-protocol
+ */
+export interface TerraformProviderVersions {
+  versions: TerraformProviderVersionsVersion[];
+}
+
+export interface TerraformProviderVersionsVersion {
+  version: string;
+}
+
+export interface TerraformProviderReleaseBackend {
+  name: string;
+  versions: VersionsReleaseBackend;
+}
 
 export type VersionsReleaseBackend = Record<string, VersionDetailResponse>;
 
@@ -49,4 +58,5 @@ export interface TerraformRegistryBuildResponse {
   arch: string;
   filename: string;
   download_url: string;
+  shasums_url?: string;
 }

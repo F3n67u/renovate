@@ -1,8 +1,7 @@
-import is from '@sindresorhus/is';
-import semver from 'semver';
 import { CONFIG_VALIDATION } from '../../../constants/error-messages';
 import { regEx } from '../../../util/regex';
-import { GenericVersion, GenericVersioningApi } from '../generic';
+import type { GenericVersion } from '../generic';
+import { GenericVersioningApi } from '../generic';
 import type { VersioningApiConstructor } from '../types';
 
 export const id = 'regex';
@@ -18,15 +17,6 @@ export interface RegExpVersion extends GenericVersion {
   compatibility: string;
 }
 
-// convenience method for passing a Version object into any semver.* method.
-function asSemver(version: RegExpVersion): string {
-  let vstring = `${version.release[0]}.${version.release[1]}.${version.release[2]}`;
-  if (is.nonEmptyString(version.prerelease)) {
-    vstring += `-${version.prerelease}`;
-  }
-  return vstring;
-}
-
 export class RegExpVersioningApi extends GenericVersioningApi<RegExpVersion> {
   // config is expected to be overridden by a user-specified RegExp value
   // sample values:
@@ -39,7 +29,7 @@ export class RegExpVersioningApi extends GenericVersioningApi<RegExpVersion> {
   //   RegExp('^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?<prerelease>[^.-]+)?(-(?<compatibility>.*))?$');
   // * matches the versioning approach used by the Bitnami images on DockerHub:
   //   RegExp('^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(:?-(?<compatibility>.*-r)(?<build>\\d+))?$');
-  private _config: RegExp | null = null;
+  protected readonly _config: RegExp;
 
   constructor(_new_config: string | undefined) {
     super();
@@ -71,7 +61,8 @@ export class RegExpVersioningApi extends GenericVersioningApi<RegExpVersion> {
       return null;
     }
 
-    const { major, minor, patch, build, prerelease, compatibility } = groups;
+    const { major, minor, patch, build, revision, prerelease, compatibility } =
+      groups;
     const release = [
       typeof major === 'undefined' ? 0 : Number.parseInt(major, 10),
       typeof minor === 'undefined' ? 0 : Number.parseInt(minor, 10),
@@ -80,12 +71,15 @@ export class RegExpVersioningApi extends GenericVersioningApi<RegExpVersion> {
 
     if (build) {
       release.push(Number.parseInt(build, 10));
+      if (revision) {
+        release.push(Number.parseInt(revision, 10));
+      }
     }
 
     return {
       release,
-      prerelease: prerelease,
-      compatibility: compatibility,
+      prerelease,
+      compatibility,
     };
   }
 
@@ -96,58 +90,6 @@ export class RegExpVersioningApi extends GenericVersioningApi<RegExpVersion> {
       parsedVersion &&
       parsedCurrent &&
       parsedVersion.compatibility === parsedCurrent.compatibility
-    );
-  }
-
-  override isLessThanRange(version: string, range: string): boolean {
-    const parsedVersion = this._parse(version);
-    const parsedRange = this._parse(range);
-    return !!(
-      parsedVersion &&
-      parsedRange &&
-      semver.ltr(asSemver(parsedVersion), asSemver(parsedRange))
-    );
-  }
-
-  override getSatisfyingVersion(
-    versions: string[],
-    range: string
-  ): string | null {
-    const parsedRange = this._parse(range);
-    return parsedRange
-      ? semver.maxSatisfying(
-          versions
-            .map((v) => this._parse(v))
-            .filter(is.truthy)
-            .map(asSemver),
-          asSemver(parsedRange)
-        )
-      : null;
-  }
-
-  override minSatisfyingVersion(
-    versions: string[],
-    range: string
-  ): string | null {
-    const parsedRange = this._parse(range);
-    return parsedRange
-      ? semver.minSatisfying(
-          versions
-            .map((v) => this._parse(v))
-            .filter(is.truthy)
-            .map(asSemver),
-          asSemver(parsedRange)
-        )
-      : null;
-  }
-
-  override matches(version: string, range: string): boolean {
-    const parsedVersion = this._parse(version);
-    const parsedRange = this._parse(range);
-    return !!(
-      parsedVersion &&
-      parsedRange &&
-      semver.satisfies(asSemver(parsedVersion), asSemver(parsedRange))
     );
   }
 }

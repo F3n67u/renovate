@@ -1,18 +1,21 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`config/presets/index getPreset gets linters 1`] = `
-Object {
-  "description": Array [
-    "All lint-related packages",
+{
+  "description": [
+    "All lint-related packages.",
   ],
-  "extends": Array [
+  "extends": [
     "packages:emberTemplateLint",
     "packages:eslint",
+    "packages:phpLinters",
     "packages:stylelint",
     "packages:tslint",
   ],
-  "matchPackageNames": Array [
+  "matchPackageNames": [
+    "prettier",
     "remark-lint",
+    "standard",
   ],
 }
 `;
@@ -24,52 +27,52 @@ exports[`config/presets/index getPreset handles 404 packages 2`] = `undefined`;
 exports[`config/presets/index getPreset handles 404 packages 3`] = `undefined`;
 
 exports[`config/presets/index resolvePreset migrates automerge in presets 1`] = `
-Object {
+{
   "automergeType": "pr",
   "branchPrefix": "renovate/",
-  "description": Array [
-    "Use <code>renovate/</code> as prefix for all branch names",
-    "If semantic commits detected, use semantic commit type <code>fix</code> for dependencies and <code>chore</code> for all others",
-    "Require all status checks to pass before any automerging",
-    "Pin dependency versions for <code>devDependencies</code> and retain SemVer ranges for others",
+  "description": [
+    "Add the \`renovate/\` prefix to all branch names.",
+    "Use semantic commit type \`fix\` for dependencies and \`chore\` for all others if semantic commits are in use.",
+    "Require all status checks to pass before any automerging.",
+    "Pin dependency versions for development dependencies and retain SemVer ranges for others.",
   ],
   "ignoreTests": false,
   "ignoreUnstable": true,
-  "labels": Array [
+  "labels": [
     "dependencies",
   ],
-  "lockFileMaintenance": Object {
+  "lockFileMaintenance": {
     "automerge": true,
     "enabled": true,
-    "schedule": Array [
+    "schedule": [
       "before 8am on Monday",
     ],
   },
-  "major": Object {
+  "major": {
     "automerge": false,
   },
-  "minor": Object {
+  "minor": {
     "automerge": true,
   },
-  "packageRules": Array [
-    Object {
-      "matchPackagePatterns": Array [
+  "packageRules": [
+    {
+      "matchPackageNames": [
         "*",
       ],
       "semanticCommitType": "chore",
     },
-    Object {
-      "matchDepTypes": Array [
+    {
+      "matchDepTypes": [
         "dependencies",
         "require",
       ],
       "semanticCommitType": "fix",
     },
-    Object {
-      "matchDatasources": Array [
+    {
+      "matchDatasources": [
         "maven",
       ],
-      "matchDepTypes": Array [
+      "matchDepTypes": [
         "compile",
         "provided",
         "runtime",
@@ -79,20 +82,42 @@ Object {
       ],
       "semanticCommitType": "fix",
     },
-    Object {
-      "matchPackagePatterns": Array [
+    {
+      "matchDepTypes": [
+        "project.dependencies",
+        "project.optional-dependencies",
+      ],
+      "matchManagers": [
+        "pep621",
+      ],
+      "semanticCommitType": "fix",
+    },
+    {
+      "matchDepTypes": [
+        "dependencies",
+        "extras",
+      ],
+      "matchManagers": [
+        "poetry",
+      ],
+      "semanticCommitType": "fix",
+    },
+    {
+      "matchPackageNames": [
         "*",
       ],
       "rangeStrategy": "replace",
     },
-    Object {
-      "matchDepTypes": Array [
+    {
+      "matchDepTypes": [
         "devDependencies",
+        "dev-dependencies",
+        "dev",
       ],
       "rangeStrategy": "pin",
     },
-    Object {
-      "matchDepTypes": Array [
+    {
+      "matchDepTypes": [
         "peerDependencies",
       ],
       "rangeStrategy": "widen",
@@ -101,7 +126,7 @@ Object {
   "prCreation": "immediate",
   "rebaseWhen": "behind-base-branch",
   "respectLatest": true,
-  "schedule": Array [
+  "schedule": [
     "before 8am",
   ],
   "semanticCommits": "enabled",
@@ -112,66 +137,84 @@ Object {
 `;
 
 exports[`config/presets/index resolvePreset resolves eslint 1`] = `
-Object {
-  "matchPackageNames": Array [
+{
+  "matchPackageNames": [
     "@types/eslint",
     "babel-eslint",
-  ],
-  "matchPackagePrefixes": Array [
-    "@typescript-eslint/",
-    "eslint",
+    "@babel/eslint-parser",
+    "@eslint/**",
+    "@eslint-community/**",
+    "@stylistic/eslint-plugin**",
+    "@types/eslint__**",
+    "@typescript-eslint/**",
+    "typescript-eslint",
+    "eslint**",
   ],
 }
 `;
 
 exports[`config/presets/index resolvePreset resolves linters 1`] = `
-Object {
-  "description": Array [
-    "All lint-related packages",
+{
+  "description": [
+    "All lint-related packages.",
   ],
-  "matchPackageNames": Array [
+  "matchPackageNames": [
+    "ember-template-lint**",
     "@types/eslint",
     "babel-eslint",
+    "@babel/eslint-parser",
+    "@eslint/**",
+    "@eslint-community/**",
+    "@stylistic/eslint-plugin**",
+    "@types/eslint__**",
+    "@typescript-eslint/**",
+    "typescript-eslint",
+    "eslint**",
+    "friendsofphp/php-cs-fixer",
+    "squizlabs/php_codesniffer",
+    "symplify/easy-coding-standard",
+    "stylelint**",
     "codelyzer",
+    "/\\btslint\\b/",
+    "prettier",
     "remark-lint",
-  ],
-  "matchPackagePatterns": Array [
-    "\\\\btslint\\\\b",
-  ],
-  "matchPackagePrefixes": Array [
-    "ember-template-lint",
-    "@typescript-eslint/",
-    "eslint",
-    "stylelint",
+    "standard",
   ],
 }
 `;
 
 exports[`config/presets/index resolvePreset resolves nested groups 1`] = `
-Object {
-  "description": Array [
-    "Update lint packages automatically if tests pass",
+{
+  "description": [
+    "Update lint packages automatically if tests pass.",
   ],
-  "packageRules": Array [
-    Object {
+  "packageRules": [
+    {
       "automerge": true,
-      "description": Array [
-        "All lint-related packages",
+      "description": [
+        "All lint-related packages.",
       ],
-      "matchPackageNames": Array [
+      "matchPackageNames": [
+        "ember-template-lint**",
         "@types/eslint",
         "babel-eslint",
+        "@babel/eslint-parser",
+        "@eslint/**",
+        "@eslint-community/**",
+        "@stylistic/eslint-plugin**",
+        "@types/eslint__**",
+        "@typescript-eslint/**",
+        "typescript-eslint",
+        "eslint**",
+        "friendsofphp/php-cs-fixer",
+        "squizlabs/php_codesniffer",
+        "symplify/easy-coding-standard",
+        "stylelint**",
         "codelyzer",
+        "/\\btslint\\b/",
+        "prettier",
         "remark-lint",
-      ],
-      "matchPackagePatterns": Array [
-        "\\\\btslint\\\\b",
-      ],
-      "matchPackagePrefixes": Array [
-        "ember-template-lint",
-        "@typescript-eslint/",
-        "eslint",
-        "stylelint",
+        "standard",
       ],
     },
   ],
@@ -179,8 +222,8 @@ Object {
 `;
 
 exports[`config/presets/index resolvePreset resolves self-hosted presets without baseConfig 1`] = `
-Object {
-  "labels": Array [
+{
+  "labels": [
     "self-hosted resolved",
   ],
 }
